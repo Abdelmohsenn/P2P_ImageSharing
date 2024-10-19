@@ -12,7 +12,7 @@ async fn main() -> io::Result<()> {
     println!("Server listening on {}", together);
 
     let mut buffer = [0u8; 2048];
-    let mut image_data = Vec::new(); // Buffer to store image chunks
+    let mut image_data = Vec::new(); 
     let mut chunk_count = 0;
 
     loop {
@@ -35,7 +35,7 @@ async fn main() -> io::Result<()> {
             file.write_all(&image_data)?;
             println!("Image saved successfully!");
 
-            // Clear image buffer and reset chunk count
+
             image_data.clear();
             chunk_count = 0;
             socket.send_to(b"ACK", addr).await?; // Acknowledge final chunk and END signal

@@ -2,6 +2,7 @@ use tokio::net::UdpSocket;
 use image::{ImageFormat};
 use std::io::{self, Cursor};
 
+// tokio usage line for async tasks
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let mut num = 0;
@@ -15,16 +16,21 @@ async fn main() -> io::Result<()> {
         io::stdin().read_line(&mut input).expect("Failed to read line");
         let input = input.trim();
 
+       
+
         match image::open(input) {
             Ok(img) => {
                 
                 let mut buf = Cursor::new(Vec::new());
+                
+                // handling all img formats
+                let format = image::guess_format(&std::fs::read(input).expect("Failed to read the image file")).unwrap_or(ImageFormat::Png);
 
                 // Converting the Image to Bytes
-                img.write_to(&mut buf, ImageFormat::Jpeg).expect("Failed to convert image to bytes");
+                img.write_to(&mut buf, format).expect("Failed to convert image to bytes");
                 let image_bytes = buf.into_inner();
 
-                // Divide the Image into smaller chunks
+                // smaller chunks division
                 let chunk_size = 2048;
                 let total_chunks = (image_bytes.len() as f64 / chunk_size as f64).ceil() as usize;
                 let batch_size = 500;
@@ -40,7 +46,7 @@ async fn main() -> io::Result<()> {
                     socket.send(chunk).await?;
                     println!("Sent chunk {}/{}", i + 1, total_chunks);
 
-                    // Stop and wait for server ACK. 
+                    //  wait for server ACK. 
                     if (i + 1) % batch_size == 0 {
                         let ack_size = socket.recv(&mut ack_buffer).await?;
                         let ack_message = String::from_utf8_lossy(&ack_buffer[..ack_size]);
@@ -51,7 +57,7 @@ async fn main() -> io::Result<()> {
                         }
                         println!("ACK received from server, continuing...");
                     }
-                    
+                    ca
                 }
 
                 // Send END to indicate the end of the image transmission
