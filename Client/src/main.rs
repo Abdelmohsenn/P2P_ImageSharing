@@ -57,7 +57,6 @@ async fn main() -> io::Result<()> {
                         }
                         println!("ACK received from server, continuing...");
                     }
-                    ca
                 }
 
                 // Send END to indicate the end of the image transmission

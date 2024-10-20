@@ -1,7 +1,10 @@
 use tokio::net::UdpSocket;
-use std::fs::File;
-use std::io::Write;
-use tokio::io::{self};
+use std::io::{self};
+use image::{ImageFormat, DynamicImage, RgbaImage}; // Ensure you import ImageFormat
+use std::io::Cursor;
+use std::path::Path;
+
+mod encryption;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -12,7 +15,7 @@ async fn main() -> io::Result<()> {
     println!("Server listening on {}", together);
 
     let mut buffer = [0u8; 2048];
-    let mut image_data = Vec::new(); 
+    let mut img_data = Vec::new(); 
     let mut chunk_count = 0;
 
     loop {
@@ -20,7 +23,7 @@ async fn main() -> io::Result<()> {
         println!("Received chunk of size: {} from {}", size, addr);
 
         // Add data to current image
-        image_data.extend_from_slice(&buffer[..size]);
+        img_data.extend_from_slice(&buffer[..size]);
         chunk_count += 1;
 
         // Acknowledge every 500 chunks received
@@ -29,16 +32,29 @@ async fn main() -> io::Result<()> {
             println!("Acknowledged 500 chunks.");
         }
 
-        // If the end of the image is detected, save the file
+        // If the end of the image is detected, process the images
         if &buffer[..size] == b"END" {
-            let mut file = File::create("received_image.png")?;
-            file.write_all(&image_data)?;
-            println!("Image saved successfully!");
+            let original_img = image::load(Cursor::new(img_data.clone()), ImageFormat::Jpeg).unwrap();
+        
+            let default_img_path = Path::new("images/pexels-sohi-807598.jpg");
+            let default_img = image::open(default_img_path).unwrap();
+        
+            let encrypted_img: RgbaImage = encryption::encrypt(default_img, original_img);
+            
+            encrypted_img.save("images/encrypted-image.jpg");
 
+            println!("Encrypted image saved successfully!");
 
-            image_data.clear();
+            let (w, h) = encrypted_img.dimensions();
+            let decrypted_img: DynamicImage = encryption::decrypt(DynamicImage::from(encrypted_img.clone()), w, h);
+
+            decrypted_img.save("images/decrypted-image.jpg");
+
+            println!("Decrypted image saved successfully!");
+
+            img_data.clear(); // Clear for the next batch
             chunk_count = 0;
             socket.send_to(b"ACK", addr).await?; // Acknowledge final chunk and END signal
-        }
+        }        
     }
 }
