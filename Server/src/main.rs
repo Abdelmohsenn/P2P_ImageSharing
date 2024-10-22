@@ -1,6 +1,6 @@
 use tokio::net::UdpSocket;
 use std::io::{self};
-use image::{ImageFormat, DynamicImage, RgbaImage}; // Ensure you import ImageFormat
+use image::{ImageFormat, DynamicImage, RgbaImage};
 use std::io::Cursor;
 use std::path::Path;
 
@@ -39,13 +39,13 @@ async fn main() -> io::Result<()> {
             let default_img_path = Path::new("images/pexels-sohi-807598.jpg");
             let default_img = image::open(default_img_path).unwrap();
         
-            let encrypted_img: RgbaImage = encryption::encrypt(default_img, original_img);
+            let encrypted_img: RgbaImage = encryption::encrypt(default_img, original_img.clone());
             
             encrypted_img.save("images/encrypted-image.jpg");
 
             println!("Encrypted image saved successfully!");
 
-            let (w, h) = encrypted_img.dimensions();
+            let (w, h) = original_img.to_rgba8().dimensions();
             let decrypted_img: DynamicImage = encryption::decrypt(DynamicImage::from(encrypted_img.clone()), w, h);
 
             decrypted_img.save("images/decrypted-image.jpg");
