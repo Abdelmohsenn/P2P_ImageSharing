@@ -3,8 +3,9 @@ use std::io::{self};
 use image::{ImageFormat, DynamicImage, RgbaImage};
 use std::io::Cursor;
 use std::path::Path;
+use std::time::Instant;
 
-mod encryption;
+mod steganography;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -36,19 +37,24 @@ async fn main() -> io::Result<()> {
         if &buffer[..size] == b"END" {
             let original_img = image::load(Cursor::new(img_data.clone()), ImageFormat::Jpeg).unwrap();
         
-            let default_img_path = Path::new("images/pexels-sohi-807598.jpg");
+            let default_img_path = Path::new("images/sunflower-0quality.jpg");
             let default_img = image::open(default_img_path).unwrap();
-        
-            let encrypted_img: RgbaImage = encryption::encrypt(default_img, original_img.clone());
-            
-            encrypted_img.save("images/encrypted-image.jpg");
+
+            let start = Instant::now();
+            let encrypted_img: RgbaImage = steganography::encrypt(default_img, original_img.clone());
+            let duration = start.elapsed();
+            println!("Time taken: {:?}", duration);
+
+            let _ = encrypted_img.save("images/encrypted-image.jpg");
 
             println!("Encrypted image saved successfully!");
 
-            let (w, h) = original_img.to_rgba8().dimensions();
-            let decrypted_img: DynamicImage = encryption::decrypt(DynamicImage::from(encrypted_img.clone()), w, h);
+            let start = Instant::now();
+            let decrypted_img: DynamicImage = steganography::decrypt(DynamicImage::from(encrypted_img.clone()));
+            let duration = start.elapsed();
+            println!("Time taken for decryption: {:?}", duration);
 
-            decrypted_img.save("images/decrypted-image.jpg");
+            let _ = decrypted_img.save("images/decrypted-image.jpg");
 
             println!("Decrypted image saved successfully!");
 
