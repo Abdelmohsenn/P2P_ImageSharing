@@ -1,23 +1,41 @@
-use tokio::net::UdpSocket;
+use tokio::net::{UdpSocket, TcpSocket};
+use tokio::task;
 use std::io::{self};
 use image::{ImageFormat, DynamicImage, RgbaImage};
 use std::io::Cursor;
 use std::path::Path;
 use std::time::Instant;
+use std::env;
+use std::process;
 
 mod steganography;
+mod bullyElection;
 
-#[tokio::main]
+#[tokio::main] // using tokio udp socket for communication
 async fn main() -> io::Result<()> {
+    // changed it to dynamic arguments
+    // let args: Vec<String> = env::args().collect();
     let address = "127.0.0.1";
+    let serverID = process::id(); // adding an id
     let port = "8080";
+    let mut leader = false; // flag indicating leader status
+    // concatenation
     let together = format!("{}:{}", address, port);
     let socket = UdpSocket::bind(&together).await?;
+
+
     println!("Server listening on {}", together);
+    println!("I am Process {}", serverID);
+    // Start the election process, swap the ports when testing (Duplicate Servers)
+    let peer_address = "127.0.0.1:8087"; 
+    let election_socket = UdpSocket::bind("127.0.0.1:8085").await?;
+    
+    // bullyElection::server_election(&election_socket, peer_address).await?;
 
     let mut buffer = [0u8; 2048];
-    let mut img_data = Vec::new(); 
+    let mut img_data = Vec::new(); // image data array
     let mut chunk_count = 0;
+    
 
     loop {
         let (size, addr) = socket.recv_from(&mut buffer).await?;
@@ -63,4 +81,8 @@ async fn main() -> io::Result<()> {
             socket.send_to(b"ACK", addr).await?; // Acknowledge final chunk and END signal
         }        
     }
+
+
 }
+
+
