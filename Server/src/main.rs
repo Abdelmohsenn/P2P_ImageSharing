@@ -1,17 +1,32 @@
+<<<<<<< HEAD
 use std::env;
 use std::io;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
+=======
+use tokio::net::{UdpSocket, TcpSocket};
+use tokio::task;
+use std::io::{self};
+use image::{ImageFormat, DynamicImage, RgbaImage};
+use std::io::Cursor;
+>>>>>>> origin/main
 use std::path::Path;
 use image::{DynamicImage, RgbaImage};
 use std::time::Instant;
+<<<<<<< HEAD
 use std::io::Cursor;
+=======
+use std::env;
+use std::process;
+>>>>>>> origin/main
 
 mod steganography;
+mod bullyElection;
 
-#[tokio::main]
+#[tokio::main] // using tokio udp socket for communication
 async fn main() -> io::Result<()> {
+<<<<<<< HEAD
     // Number of servers = 3
     const N: usize = 3;
     
@@ -23,6 +38,31 @@ async fn main() -> io::Result<()> {
         eprintln!("Usage: {} <IP1:PORT1>, <IP2:PORT2>, <IP3:PORT3>", args[0]);
         return Ok(());
     }
+=======
+    // changed it to dynamic arguments
+    // let args: Vec<String> = env::args().collect();
+    let address = "127.0.0.1";
+    let serverID = process::id(); // adding an id
+    let port = "8080";
+    let mut leader = false; // flag indicating leader status
+    // concatenation
+    let together = format!("{}:{}", address, port);
+    let socket = UdpSocket::bind(&together).await?;
+
+
+    println!("Server listening on {}", together);
+    println!("I am Process {}", serverID);
+    // Start the election process, swap the ports when testing (Duplicate Servers)
+    let peer_address = "127.0.0.1:8087"; 
+    let election_socket = UdpSocket::bind("127.0.0.1:8085").await?;
+    
+    // bullyElection::server_election(&election_socket, peer_address).await?;
+
+    let mut buffer = [0u8; 2048];
+    let mut img_data = Vec::new(); // image data array
+    let mut chunk_count = 0;
+    
+>>>>>>> origin/main
 
     // The IP address and port number of the same server is the second argument
     // let address = &args[1];
@@ -88,9 +128,25 @@ async fn main() -> io::Result<()> {
             println!("Decryption Time: {:?}", start.elapsed());
 
             let _ = decrypted_img.save("images/decrypted-image.jpg");
+<<<<<<< HEAD
             println!("Processed image from {}", addr);
         }
     }).await.unwrap(); // Ensure we wait for the task
     Ok(())
 }
 
+=======
+
+            println!("Decrypted image saved successfully!");
+
+            img_data.clear(); // Clear for the next batch
+            chunk_count = 0;
+            socket.send_to(b"ACK", addr).await?; // Acknowledge final chunk and END signal
+        }        
+    }
+
+
+}
+
+
+>>>>>>> origin/main
