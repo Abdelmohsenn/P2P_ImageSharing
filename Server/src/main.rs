@@ -1,66 +1,96 @@
+use std::env;
+use std::io;
+use std::sync::Arc;
 use tokio::net::UdpSocket;
-use std::io::{self};
-use image::{ImageFormat, DynamicImage, RgbaImage};
-use std::io::Cursor;
+use tokio::sync::mpsc;
 use std::path::Path;
+use image::{DynamicImage, RgbaImage};
 use std::time::Instant;
+use std::io::Cursor;
 
 mod steganography;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let address = "127.0.0.1";
-    let port = "8080";
-    let together = format!("{}:{}", address, port);
-    let socket = UdpSocket::bind(&together).await?;
-    println!("Server listening on {}", together);
+    // Number of servers = 3
+    const N: usize = 3;
+    
+    // Extract the command-line arguments
+    let args: Vec<String> = env::args().collect();
 
-    let mut buffer = [0u8; 2048];
-    let mut img_data = Vec::new(); 
-    let mut chunk_count = 0;
+    // Check if the IP addresses and port numbers of the three servers are provided
+    if args.len() != N+1 {
+        eprintln!("Usage: {} <IP1:PORT1>, <IP2:PORT2>, <IP3:PORT3>", args[0]);
+        return Ok(());
+    }
 
-    loop {
-        let (size, addr) = socket.recv_from(&mut buffer).await?;
-        println!("Received chunk of size: {} from {}", size, addr);
+    // The IP address and port number of the same server is the second argument
+    // let address = &args[1];
+    let addresses_ports = [
+        args[args.len() - 3].clone(),
+        args[args.len() - 2].clone(),
+        args[args.len() - 1].clone(),
+    ];
+    
+    // Create a socket bound to the provided address
+    let socket = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(addresses_ports[0].clone()).await?));
+    println!("Server listening on {}", addresses_ports[0]);
 
-        // Add data to current image
-        img_data.extend_from_slice(&buffer[..size]);
-        chunk_count += 1;
+    let (tx, mut rx) = mpsc::channel(32);
+    let socket_clone = Arc::clone(&socket);
 
-        // Acknowledge every 500 chunks received
-        if chunk_count % 500 == 0 {
-            socket.send_to(b"ACK", addr).await?;
-            println!("Acknowledged 500 chunks.");
+    // Spawn task for receiving packets
+    tokio::spawn(async move {
+        let mut buffer = [0u8; 2048];
+        let mut chunk_count = 0;
+        let mut img_data = Vec::new();
+
+        loop {
+            let (size, addr) = socket_clone.lock().await.recv_from(&mut buffer).await.unwrap();
+            println!("Received chunk of size: {} from {}", size, addr);
+
+            // Add data to current image
+            img_data.extend_from_slice(&buffer[..size]);
+            chunk_count += 1;
+
+            // Acknowledge every 500 chunks received
+            if chunk_count % 500 == 0 {
+                socket_clone.lock().await.send_to(b"ACK", addr).await.unwrap();
+                println!("Acknowledged 500 chunks.");
+            }
+
+            // If the end of the image is detected, send data for processing
+            if &buffer[..size] == b"END" {
+                tx.send((img_data.clone(), addr)).await.unwrap();
+                img_data.clear(); // Reset for the next batch
+                chunk_count = 0;
+            }
         }
+    });
 
-        // If the end of the image is detected, process the images
-        if &buffer[..size] == b"END" {
-            let original_img = image::load(Cursor::new(img_data.clone()), ImageFormat::Jpeg).unwrap();
-        
+    // Spawn task for processing encryption/decryption
+    tokio::spawn(async move {
+        while let Some((img_data, addr)) = rx.recv().await {
+            let original_img = image::load(Cursor::new(img_data.clone()), image::ImageFormat::Jpeg).unwrap();
             let default_img_path = Path::new("images/sunflower-0quality.jpg");
             let default_img = image::open(default_img_path).unwrap();
 
+            // Encryption
             let start = Instant::now();
             let encrypted_img: RgbaImage = steganography::encrypt(default_img, original_img.clone());
-            let duration = start.elapsed();
-            println!("Time taken: {:?}", duration);
+            println!("Encryption Time: {:?}", start.elapsed());
 
             let _ = encrypted_img.save("images/encrypted-image.jpg");
 
-            println!("Encrypted image saved successfully!");
-
+            // Decryption
             let start = Instant::now();
-            let decrypted_img: DynamicImage = steganography::decrypt(DynamicImage::from(encrypted_img.clone()));
-            let duration = start.elapsed();
-            println!("Time taken for decryption: {:?}", duration);
+            let decrypted_img: DynamicImage = steganography::decrypt(DynamicImage::from(encrypted_img));
+            println!("Decryption Time: {:?}", start.elapsed());
 
             let _ = decrypted_img.save("images/decrypted-image.jpg");
-
-            println!("Decrypted image saved successfully!");
-
-            img_data.clear(); // Clear for the next batch
-            chunk_count = 0;
-            socket.send_to(b"ACK", addr).await?; // Acknowledge final chunk and END signal
-        }        
-    }
+            println!("Processed image from {}", addr);
+        }
+    }).await.unwrap(); // Ensure we wait for the task
+    Ok(())
 }
+
