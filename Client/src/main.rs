@@ -3,19 +3,23 @@ use tokio::net::UdpSocket;
 use image::{ImageFormat};
 use std::io::{self, Cursor};
 
+mod steganography;
+
 // tokio usage line for async tasks
 #[tokio::main]
 async fn main() -> io::Result<()> {
     // Extract the command-line arguments
     let args: Vec<String> = env::args().collect();
-
+    const N: usize = 4;
     // Check if the IP addresses and port numbers of the three servers are provided
-    if args.len() != 3 {
-        eprintln!("Usage: {} <ClientIP:ClientPORT> <IP1:PORT1>", args[0]);
+    if args.len() != N+1 {
+        eprintln!("Usage: {} <ClientIP:ClientPORT> <Server1_IP:Server1_PORT> <Server2_IP:Server2_PORT> <Server3_IP:Server3_PORT>", args[0]);
         return Ok(());
     }
 
     let addresses_ports = [
+        args[args.len() - 4].clone(),
+        args[args.len() - 3].clone(),
         args[args.len() - 2].clone(),
         args[args.len() - 1].clone(),
     ];

@@ -4,11 +4,11 @@ use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use std::path::Path;
-use image::{DynamicImage, RgbaImage};
+use image::{RgbaImage};
 use std::time::Instant;
 use std::io::Cursor;
 
-mod steganography;
+mod encryption;
 mod bully_election;
 
 #[tokio::main] // using tokio udp socket for communication
@@ -71,27 +71,18 @@ async fn main() -> io::Result<()> {
 
     // Spawn task for processing encryption/decryption
     tokio::spawn(async move {
-        while let Some((img_data, addr)) = rx.recv().await {
+        while let Some((img_data, _addr)) = rx.recv().await {
             let original_img = image::load(Cursor::new(img_data.clone()), image::ImageFormat::Jpeg).unwrap();
             let default_img_path = Path::new("images/sunflower-0quality.jpg");
             let default_img = image::open(default_img_path).unwrap();
 
             // Encryption
             let start = Instant::now();
-            let encrypted_img: RgbaImage = steganography::encrypt(default_img, original_img.clone());
+            let encrypted_img: RgbaImage = encryption::encrypt(default_img, original_img.clone());
             println!("Encryption Time: {:?}", start.elapsed());
 
             let _ = encrypted_img.save("images/encrypted-image.jpg");
-
-            // Decryption
-            let start = Instant::now();
-            let decrypted_img: DynamicImage = steganography::decrypt(DynamicImage::from(encrypted_img));
-            println!("Decryption Time: {:?}", start.elapsed());
-
-            let _ = decrypted_img.save("images/decrypted-image.jpg");
-            println!("Processed image from {}", addr);
         }
     }).await.unwrap(); // Ensure we wait for the task
     Ok(())
 }
-
