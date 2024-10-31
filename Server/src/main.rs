@@ -10,6 +10,8 @@ use std::io::Cursor;
 
 mod encryption;
 mod bully_election;
+use bully_election::server_election;
+
 
 #[tokio::main] // using tokio udp socket for communication
 async fn main() -> io::Result<()> {
@@ -17,28 +19,45 @@ async fn main() -> io::Result<()> {
     const N: usize = 3;
     
     // Extract the command-line arguments
-    let args: Vec<String> = env::args().collect();
+    // let args: Vec<String> = env::args().collect();
 
     // Check if the IP addresses and port numbers of the three servers are provided
-    if args.len() != N+1 {
-        eprintln!("Usage: {} <IP1:PORT1>, <IP2:PORT2>, <IP3:PORT3>", args[0]);
-        return Ok(());
-    }
+    // if args.len() != N+1 {
+    //     eprintln!("Usage: {} <IP1:PORT1>, <IP2:PORT2>, <IP3:PORT3>", args[0]);
+    //     return Ok(());
+    // }
 
     // The IP address and port number of the same server is the second argument
     // let address = &args[1];
-    let addresses_ports = [
-        args[args.len() - 3].clone(),
-        args[args.len() - 2].clone(),
-        args[args.len() - 1].clone(),
-    ];
-    
+    // let addresses_ports = [
+    //     // args[args.len() - 3].clone(),
+    //     // args[args.len() - 2].clone(),
+    //     args[args.len() - 1].clone(),
+    // ];
+    let peer_address = "10.7.16.44:8091";
+    let myaddress = "10.7.16.44:8090";
     // Create a socket bound to the provided address
-    let socket = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(addresses_ports[0].clone()).await?));
-    println!("Server listening on {}", addresses_ports[0]);
+    let socket = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(myaddress.clone()).await?));
+    println!("Server listening on {}", myaddress);
+
+
+    tokio::spawn(async move {
+        match server_election(&socket, peer_address).await {
+            Ok(is_leader) => {
+                if is_leader {
+                    println!("Main: This server is the leader.");
+                } else {
+                    println!("Main: This server is not the leader.");
+                }
+            }
+            Err(e) => eprintln!("Election failed: {:?}", e),
+        }
+        });
 
     let (tx, mut rx) = mpsc::channel(32);
-    let socket_clone = Arc::clone(&socket);
+
+    let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind("10.7.16.44:8080").await?));
+    let socket_clone_client = Arc::clone(&socket_client);
 
     // Spawn task for receiving packets
     tokio::spawn(async move {
@@ -47,7 +66,7 @@ async fn main() -> io::Result<()> {
         let mut img_data = Vec::new();
 
         loop {
-            let (size, addr) = socket_clone.lock().await.recv_from(&mut buffer).await.unwrap();
+            let (size, addr) = socket_clone_client.lock().await.recv_from(&mut buffer).await.unwrap();
             println!("Received chunk of size: {} from {}", size, addr);
 
             // Add data to current image
@@ -56,7 +75,7 @@ async fn main() -> io::Result<()> {
 
             // Acknowledge every 500 chunks received
             if chunk_count % 500 == 0 {
-                socket_clone.lock().await.send_to(b"ACK", addr).await.unwrap();
+                socket_clone_client.lock().await.send_to(b"ACK", addr).await.unwrap();
                 println!("Acknowledged 500 chunks.");
             }
 
