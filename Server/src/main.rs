@@ -35,10 +35,10 @@ async fn main() -> io::Result<()> {
     //     args[args.len() - 1].clone(),
     // ];
     let peer_address = "10.7.16.44:8091";
-    let myaddress = "10.7.16.44:8090";
+    let myadress = "10.7.16.44:8090";
     // Create a socket bound to the provided address
-    let socket = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(myaddress.clone()).await?));
-    println!("Server listening on {}", myaddress);
+    let socket = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(myadress.clone()).await?));
+    println!("Server listening on {}", myadress);
 
 
     tokio::spawn(async move {
@@ -56,7 +56,7 @@ async fn main() -> io::Result<()> {
 
     let (tx, mut rx) = mpsc::channel(32);
 
-    let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind("10.7.16.44:8080").await?));
+    let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind("127.0.0.1:8082").await?));
     let socket_clone_client = Arc::clone(&socket_client);
 
     // Spawn task for receiving packets
