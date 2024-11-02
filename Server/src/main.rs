@@ -2,6 +2,8 @@ use std::env;
 use std::io;
 use std::io::Write;
 use std::sync::Arc;
+use tokio::time::{timeout, sleep, Duration};
+use image::ImageFormat;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use std::path::Path;
@@ -22,6 +24,7 @@ async fn main() -> io::Result<()> {
     let peer_address = "127.0.0.1:8084"; // da address el peer for election
     let client_address = "127.0.0.1:8080"; // da for sending back my socket
     let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(my_address).await?));
+    let socket6 = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind("127.0.0.1:2002").await?));
 
     let socket_election = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind("127.0.0.1:8083").await?)); // server-server socket
     let socketsendipback = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind("127.0.0.1:8086").await?)); // my socket for sending back my socket
@@ -73,6 +76,7 @@ async fn main() -> io::Result<()> {
    
 
    loop {
+
     let (size, addr) = socket_clone_client.lock().await.recv_from(&mut buffer).await.unwrap();
    if size < 4 {
     continue;
@@ -131,8 +135,8 @@ if received_chunks % 10 == 0 {
 });
 
 tokio::spawn(async move {
-    while let Some((image_data, _addr)) = rx.recv().await {
-        // Guess the format from the raw image data slice
+    while let Some((image_data, client_addr)) = rx.recv().await {
+        // Guess the format and load the image for encryption
         let format = image::guess_format(&image_data).expect("Failed to guess image format");
         let original_img = image::load(Cursor::new(image_data.clone()), format).expect("Failed to load image");
 
@@ -143,7 +147,74 @@ tokio::spawn(async move {
         let encrypted_img: RgbaImage = encryption::encrypt(default_img, original_img.clone());
         println!("Encryption Time: {:?}", start.elapsed());
 
-        let _ = encrypted_img.save("images/encrypted-image.jpg").expect("Failed to save encrypted image");
+        encrypted_img.save("images/encrypted-image.jpg").expect("Failed to save encrypted image");
+
+        let mut img_buffer = Cursor::new(Vec::new());
+        encrypted_img.write_to(&mut img_buffer, ImageFormat::Jpeg).expect("Failed to write encrypted image to buffer");
+        let encrypted_data = img_buffer.into_inner();
+
+        let chunk_size = 2044;
+        let total_chunks = (encrypted_data.len() as f64 / chunk_size as f64).ceil() as usize;
+        let mut sequence_num: u32 = 0;
+        let mut ack_buffer = [0u8; 1024];
+        let max_retries = 5;
+
+        for i in 0..total_chunks {
+            let start = i * chunk_size;
+            let end = std::cmp::min(start + chunk_size, encrypted_data.len());
+            let chunk_data = &encrypted_data[start..end];
+
+            let mut chunk = Vec::with_capacity(4 + chunk_data.len());
+            chunk.extend_from_slice(&sequence_num.to_be_bytes());
+            chunk.extend_from_slice(chunk_data);
+
+            socket6.lock().await.send_to(&chunk, "127.0.0.1:2005").await.expect("Failed to send encrypted image chunk");
+            println!("Sent encrypted chunk {} of {}", i + 1, total_chunks);
+
+            let mut retries = 0;
+            loop {
+                match timeout(Duration::from_secs(5), socket6.lock().await.recv_from(&mut ack_buffer)).await {
+                    Ok(Ok((ack_size, _))) => {
+                        let ack_message = String::from_utf8_lossy(&ack_buffer[..ack_size]);
+                        if ack_message.starts_with("ACK") {
+                            let ack_num: u32 = ack_message[4..].parse().unwrap();
+                            if ack_num == sequence_num {
+                                println!("ACK received for sequence number {}", ack_num);
+                                sequence_num += 1;
+                                break;
+                            }
+                        } else if ack_message.starts_with("NACK") {
+                            println!("NACK received for sequence number {}", sequence_num);
+                        }
+                    }
+                    Ok(Err(e)) => {
+                        // Handle the case where recv_from itself returned an error
+                        eprintln!("Failed to receive ACK/NACK: {:?}", e);
+                        retries += 1;
+                        if retries >= max_retries {
+                            eprintln!("Max retries reached for chunk {}. Aborting.", sequence_num);
+                            break;
+                        }
+                        println!("Retrying chunk {} after recv_from error", sequence_num);
+                        socket6.lock().await.send_to(&chunk, "127.0.0.1:2005").await.expect("Failed to resend chunk");
+                    }
+                    Err(_) => {
+                        // Handle timeout
+                        retries += 1;
+                        if retries >= max_retries {
+                            eprintln!("Max retries reached for chunk {}. Aborting.", sequence_num);
+                            break;
+                        }
+                        println!("Timeout waiting for ACK, resending chunk {}", sequence_num);
+                        socket6.lock().await.send_to(&chunk, "127.0.0.1:2005").await.expect("Failed to resend chunk");
+                    }
+                }
+            }
+        }
+
+        // Send "END" message after the last chunk
+        socket6.lock().await.send_to(b"END", "127.0.0.1:2005").await.expect("Failed to send END message");
+        println!("Encrypted image transmission completed.");
     }
 }).await.expect("Task failed");
 

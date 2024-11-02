@@ -1,9 +1,12 @@
 use tokio::net::UdpSocket;
-use image::ImageFormat;
-use std::io::{self, Cursor};
+use image::{ImageFormat, DynamicImage, RgbaImage};
+use std::fs::File;
+use std::io::{self, Cursor, Write};
 use tokio::time::{timeout, sleep, Duration};
 use std::net::SocketAddr;
 use std::time::Instant;
+
+mod steganography;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -30,6 +33,7 @@ async fn main() -> io::Result<()> {
     
     let clientaddress = "127.0.0.1:8080";
     let socket = UdpSocket::bind(clientaddress).await?;
+    let socket6 = UdpSocket::bind("127.0.0.1:2005").await?;
 
     let mut input = String::new();
     println!("Do you want to start an election? (y/n): "); // added this for testing
@@ -208,7 +212,46 @@ async fn main() -> io::Result<()> {
         }
      }
     }
+}
+    println!("Waiting for encrypted image from server...");
+    let mut encrypted_image_data = Vec::new();
+    let mut buffer = [0u8; 2048];
+    let mut expected_sequence_num: u32 = 0;
+
+    loop {
+        let (len, addr) = socket6.recv_from(&mut buffer).await?;
+
+        if &buffer[..len] == b"END" {
+            println!("Encrypted image received completely from server.");
+            break;
+        }
+
+        // Extract the sequence number and data
+        let sequence_num = u32::from_be_bytes(buffer[0..4].try_into().unwrap());
+        let chunk_data = &buffer[4..len];
+
+        // Check if sequence number matches expected value
+        if sequence_num == expected_sequence_num {
+            encrypted_image_data.extend_from_slice(chunk_data);
+            println!("Received encrypted chunk with sequence number {}", sequence_num);
+
+            // Send ACK for the received chunk
+            let ack_message = format!("ACK {}", sequence_num);
+            socket6.send_to(ack_message.as_bytes(), addr).await?;
+            expected_sequence_num += 1;
+        } else {
+            // Send NACK if the sequence number is not as expected
+            let nack_message = format!("NACK {}", expected_sequence_num);
+            socket6.send_to(nack_message.as_bytes(), addr).await?;
+            println!("NACK sent for sequence number {}", expected_sequence_num);
+        }
     }
+
+    // Save the received encrypted image to a file
+    let mut encrypted_image_file = File::create("encrypted_image_from_server.jpg")?;
+    encrypted_image_file.write_all(&encrypted_image_data)?;
+    println!("Encrypted image saved as encrypted_image_from_server.jpg.");
+
 
     Ok(())
 }
