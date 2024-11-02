@@ -29,6 +29,7 @@ async fn main() -> io::Result<()> {
     let servers: Vec<SocketAddr> = vec![
         "127.0.0.1:8083".parse().unwrap(),
         "127.0.0.1:8084".parse().unwrap(),
+        "127.0.0.1:2010".parse().unwrap(),
     ];
     
     let clientaddress = "127.0.0.1:8080";

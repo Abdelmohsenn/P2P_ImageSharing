@@ -21,7 +21,10 @@ use bully_election::server_election;
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let my_address = "127.0.0.1:8082"; // da address el Server
-    let peer_address = "127.0.0.1:8084"; // da address el peer for election
+    let peers = vec![
+        "127.0.0.1:8084",  // Address of Peer 1
+        "127.0.0.1:2010",  // Address of Peer 2
+    ];
     let client_address = "127.0.0.1:8080"; // da for sending back my socket
     let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(my_address).await?));
     let socket6 = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind("127.0.0.1:2002").await?));
@@ -42,7 +45,7 @@ async fn main() -> io::Result<()> {
         if message == "ELECT" {
             println!("Election request received from {}. Initiating election...", addr);
 
-            match server_election(&socket_election, peer_address).await {
+            match server_election(&socket_election, peers.clone()).await {
                 Ok(is_leader) => {
                     if is_leader {
                         println!("This server is the leader.");

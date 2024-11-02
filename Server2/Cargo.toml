@@ -1,0 +1,13 @@
+[package]
+name = "Server"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.40.0", features = ["full"] }
+image = "0.24.6"
+socket2 = "0.4"
+sysinfo = "0.29"
+rand = "0.8"
