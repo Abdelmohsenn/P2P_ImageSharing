@@ -8,6 +8,11 @@ use std::time::Instant;
 
 mod steganography;
 
+fn bytes_to_image(encrypted_image_data: Vec<u8>) -> Result<DynamicImage, image::ImageError> {
+    let cursor = Cursor::new(encrypted_image_data);
+    image::load(cursor, image::ImageFormat::Jpeg)
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
 
@@ -247,11 +252,17 @@ async fn main() -> io::Result<()> {
             println!("NACK sent for sequence number {}", expected_sequence_num);
         }
     }
-
+    
     // Save the received encrypted image to a file
-    let mut encrypted_image_file = File::create("encrypted_image_from_server.jpg")?;
-    encrypted_image_file.write_all(&encrypted_image_data)?;
+    let mut encrypted_image_file = File::create("encrypted_image_from_server.jpg").expect("Failed to create file");
+    encrypted_image_file.write_all(&encrypted_image_data).expect("Failed to save encrypted image");
+    encrypted_image_file.flush().expect("Failed to flush the image to disk");
     println!("Encrypted image saved as encrypted_image_from_server.jpg.");
+    
+    let encrypted_image = bytes_to_image(encrypted_image_data.clone());
+    let decrypted_image = steganography::decrypt(encrypted_image.expect("Failed to decrypt the image")).to_rgb8();  // Convert to RGB before saving
+
+    let _ = decrypted_image.save("decrypted_image.png").expect("Failed to save the decrypted image.");
 
 
     Ok(())

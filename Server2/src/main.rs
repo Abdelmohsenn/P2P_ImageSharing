@@ -132,7 +132,7 @@ async fn main() -> io::Result<()> {
        }
 
 
-if received_chunks % 10 == 0 {
+if received_chunks % 1 == 0 {
     socket_clone_client.lock().await.send_to(format!("ACK {}", expected_sequence_num - 1).as_bytes(), addr).await.unwrap();
     println!("ACK {} sent.", expected_sequence_num - 1);
 }
@@ -153,6 +153,9 @@ tokio::spawn(async move {
         println!("Encryption Time: {:?}", start.elapsed());
 
         encrypted_img.save("images/encrypted-image.jpg").expect("Failed to save encrypted image");
+
+        let decrypted_img = encryption::decrypt(image::DynamicImage::ImageRgba8(encrypted_img.clone()));
+        decrypted_img.save("images/decrypted_image.jpg").expect("Failed to save image.");
 
         let mut img_buffer = Cursor::new(Vec::new());
         encrypted_img.write_to(&mut img_buffer, ImageFormat::Jpeg).expect("Failed to write encrypted image to buffer");
