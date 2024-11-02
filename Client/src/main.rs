@@ -2,6 +2,8 @@ use tokio::net::UdpSocket;
 use image::ImageFormat;
 use std::io::{self, Cursor};
 use tokio::time::{timeout, sleep, Duration};
+use std::net::SocketAddr;
+use std::time::Instant;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -20,11 +22,60 @@ async fn main() -> io::Result<()> {
     // args[args.len() - 1].clone(),
     // ];
 
+    // multicast to all servers
+    let servers: Vec<SocketAddr> = vec![
+        "127.0.0.1:8083".parse().unwrap(),
+        "127.0.0.1:8084".parse().unwrap(),
+    ];
+    
     let clientaddress = "127.0.0.1:8080";
-    let serverAddress = "127.0.0.1:8082";
     let socket = UdpSocket::bind(clientaddress).await?;
-    socket.connect(serverAddress).await?;
 
+    let mut input = String::new();
+    println!("Do you want to start an election? (y/n): "); // added this for testing
+    io::stdin().read_line(&mut input).expect("Failed to read input");
+
+
+    if input.trim().eq_ignore_ascii_case("y") {
+        for addr in &servers {
+            socket.send_to(b"ELECT", addr).await?;
+            println!("message sent to {}", addr);
+        }
+    }
+    
+    let mut buffer = [0u8; 2048];
+    let mut leader_address = String::new();
+    
+    loop {
+        // Set a timeout for receiving the leader address and acknowledgment
+        let receive_result = timeout(Duration::from_secs(5), socket.recv_from(&mut buffer)).await;
+    
+        match receive_result {
+            Ok(Ok((size, addr))) => {
+                // Parse the leader address from the buffer
+                let message = String::from_utf8_lossy(&buffer[..size]);
+                
+                if message.starts_with("LEADER_ACK") {
+                    // Leader acknowledgment received with the address
+                    leader_address = message.replace("LEADER_ACK:", "").trim().to_string();
+                    println!("Leader identified at {}. Proceeding to connect...", leader_address);
+    
+                    socket.connect(&leader_address).await?;  // make this the leader address after the ack is sent back from the server          
+                    break;
+                } else {
+                    println!("Received message without Leader_Ack, retrying...");
+                }
+            }
+            Ok(Err(e)) => {
+                eprintln!("Error receiving data: {:?}", e);
+            }
+            Err(_) => {
+                // Timeout occurred
+                println!("Timeout waiting for Leader_Ack. Retrying...");
+            }
+        }
+    }
+    
     let mut input = String::new();
     println!("Enter your Image Path to send to the server: ");
     io::stdin().read_line(&mut input).expect("Failed to read line");
@@ -46,6 +97,8 @@ async fn main() -> io::Result<()> {
     let mut ack_buffer = [0u8; 1024];
     let max_retries = 5;
     let mut sequence_num: u32 = 0;
+
+   
 
     for i in 0..total_chunks {
 

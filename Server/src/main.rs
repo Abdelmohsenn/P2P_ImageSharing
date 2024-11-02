@@ -18,40 +18,59 @@ use bully_election::server_election;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-   // Number of servers = 3
-   const N: usize = 3;
+    let my_address = "127.0.0.1:8082"; // da address el Server
+    let peer_address = "127.0.0.1:8084"; // da address el peer for election
+    let client_address = "127.0.0.1:8080"; // da for sending back my socket
+    let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(my_address).await?));
 
-   let peer_address = "127.0.0.1:8091"; 
-   let myadress = "127.0.0.1:8082";
+    let socket_election = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind("127.0.0.1:8083").await?)); // server-server socket
+    let socketsendipback = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind("127.0.0.1:8086").await?)); // my socket for sending back my socket
 
+    let mut leader = false;
+    
+    // Set up a task to listen for incoming messages (including "ELECT")
+    let socket_clone = Arc::clone(&socket_client);
+    tokio::spawn(async move {
+    loop {
+        let mut buffer = [0u8; 2048];
+        let (size, addr) = socket_election.lock().await.recv_from(&mut buffer).await.unwrap();
+        let message = String::from_utf8_lossy(&buffer[..size]);
 
-   let socket = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind("127.0.0.1:8083").await?)); // da server-server socket
-   println!("Server listening on {}", myadress); // listening on server-client socket
+        if message == "ELECT" {
+            println!("Election request received from {}. Initiating election...", addr);
 
+            match server_election(&socket_election, peer_address).await {
+                Ok(is_leader) => {
+                    if is_leader {
+                        println!("This server is the leader.");
+                        leader = true;
 
-   tokio::spawn(async move {
-       match server_election(&socket, peer_address).await {
-      Ok(is_leader) => {
-       if is_leader {
-          println!("Main: This server is the leader.");
-       } else {
-         println!("Main: This server is not the leader.");
-       }
-       }
-       Err(e) => eprintln!("Election failed: {:?}", e),
-       }
-   });
+                        // Send "Leader_Ack" with the server address
+                        let message_to_client = format!("LEADER_ACK:{}", my_address);
+                        socketsendipback.lock().await.send_to(message_to_client.as_bytes(), client_address).await.unwrap();
+                    } else {
+                        println!("This server is not the leader.");
+                        leader = false;
+                    }
+                }
+                Err(e) => eprintln!("Election failed: {:?}", e),
+            }
+        }
+    }
+});
 
+    
+    
    let (tx, mut rx): (mpsc::Sender<(Vec<u8>, std::net::SocketAddr)>, mpsc::Receiver<(Vec<u8>, std::net::SocketAddr)>) = mpsc::channel(32);// sender/receiving vars
-   let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(myadress).await?));
    let socket_clone_client = Arc::clone(&socket_client);
-
 
    tokio::spawn(async move {
    let mut buffer = [0u8; 2048];
    let mut image_data = Vec::new();
    let mut received_chunks = 0;
    let mut expected_sequence_num = 0;
+   println!("Server listening on {}", my_address);
+   
 
    loop {
     let (size, addr) = socket_clone_client.lock().await.recv_from(&mut buffer).await.unwrap();
