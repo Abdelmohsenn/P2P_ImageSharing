@@ -10,3 +10,4 @@ tokio = { version = "1.40.0", features = ["full"] }
 image = "0.24.6"
 socket2 = "0.4"
 sysinfo = "0.29"
+steganography = "1.0.2"

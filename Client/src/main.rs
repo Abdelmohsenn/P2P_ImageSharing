@@ -1,3 +1,5 @@
+use steganography::decoder::Decoder;
+use steganography::util::file_as_dynamic_image;
 use tokio::net::UdpSocket;
 use image::{ImageFormat, DynamicImage, RgbaImage};
 use std::fs::File;
@@ -5,8 +7,6 @@ use std::io::{self, Cursor, Write};
 use tokio::time::{timeout, sleep, Duration};
 use std::net::SocketAddr;
 use std::time::Instant;
-
-mod steganography;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
@@ -248,11 +248,23 @@ async fn main() -> io::Result<()> {
         }
     }
 
-    // Save the received encrypted image to a file
-    let mut encrypted_image_file = File::create("encrypted_image_from_server.jpg")?;
+    // Save the received encrypted image as a PNG file
+    let encrypted_image_path = "encrypted_image_from_server.png";
+    let mut encrypted_image_file = File::create(encrypted_image_path)?;
     encrypted_image_file.write_all(&encrypted_image_data)?;
-    println!("Encrypted image saved as encrypted_image_from_server.jpg.");
+    println!("Encrypted image saved as PNG at {}", encrypted_image_path);
+
+    // Load the encrypted image
+    let encrypted_image = file_as_dynamic_image(encrypted_image_path.to_string()).to_rgba();
+
+    // Decode the image using the steganography crate
+    let decoder = Decoder::new(encrypted_image);
+    let decrypted_data = decoder.decode_alpha();
+    let output_path = "decrypted_image.png";
+    std::fs::write(output_path, &decrypted_data)?;
+
+    println!("Decrypted image saved successfully as PNG!");
 
 
-    Ok(())
+        Ok(())
 }
