@@ -27,14 +27,14 @@ async fn main() -> io::Result<()> {
 
     // multicast to all servers
     let servers: Vec<SocketAddr> = vec![
-        "127.0.0.1:8083".parse().unwrap(),
-        "127.0.0.1:8084".parse().unwrap(),
-        "127.0.0.1:2010".parse().unwrap(),
+        "10.7.17.170:2010".parse().unwrap(),
+        "10.7.16.113:8083".parse().unwrap(),
+        "10.7.19.179:8084".parse().unwrap(),
     ];
     
-    let clientaddress = "127.0.0.1:8080";
+    let clientaddress = "10.40.51.162:8080";
     let socket = UdpSocket::bind(clientaddress).await?;
-    let socket6 = UdpSocket::bind("127.0.0.1:2005").await?;
+    let socket6 = UdpSocket::bind("10.40.51.162:2005").await?;
 
     let mut input = String::new();
     println!("Do you want to start an election? (y/n): "); // added this for testing
