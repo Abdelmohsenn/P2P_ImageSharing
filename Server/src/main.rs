@@ -5,12 +5,13 @@ use std::io::Cursor;
 use std::io::Write;
 use std::net::Ipv4Addr;
 use std::path::Path;
-use std::sync::Arc;
 use std::time::Instant;
 use steganography::encoder::*;
 use steganography::util::file_as_dynamic_image;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
+use std::sync::{Arc,Mutex};
+use tokio::sync::Mutex as AsyncMutex;
 use tokio::time::{sleep, timeout, Duration};
 use std::thread;
 
@@ -40,8 +41,11 @@ async fn main() -> io::Result<()> {
     let failure_socket = Arc::new(tokio::sync::Mutex::new(
         UdpSocket::bind("127.0.0.1:9000").await?,
     ));
+    let fail_flag = Arc::new(Mutex::new(false)); // Shared fail flag
+    let fail_flag_clone = Arc::clone(&fail_flag); // Clone the flag for second task
 
     let mut leader = false;
+    let fail_flag_clone_for_failure = Arc::clone(&fail_flag);
 
     // Set up a task to listen for incoming messages (including "ELECT")
     let socket_clone = Arc::clone(&socket_client);
@@ -55,8 +59,8 @@ async fn main() -> io::Result<()> {
                 .await
                 .unwrap();
             let message = String::from_utf8_lossy(&buffer[..size]);
-
-            if message == "ELECT" {
+            let fail_flag_value = *fail_flag_clone.lock().unwrap();
+            if message == "ELECT" && !fail_flag_value {
                 println!(
                     "Election request received from {}. Initiating election...",
                     addr
@@ -84,9 +88,11 @@ async fn main() -> io::Result<()> {
                     Err(e) => eprintln!("Election failed: {:?}", e),
                 }
             }
+            // else {
+            //     *fail_flag_clone_for_failure.lock().unwrap() = false;
+            // }
         }
     });
-
 
     let failure_socket_clone = Arc::clone(&failure_socket);
     tokio::spawn(async move {
@@ -103,10 +109,14 @@ async fn main() -> io::Result<()> {
             println!("Message received from {}: {}", addr, message);
     
             if message.trim() == "SLEEP" {
+                *fail_flag_clone_for_failure.lock().unwrap() = true;
                 println!("Received SLEEP command. Sleeping...");
                 thread::sleep(Duration::from_secs(60));
                 println!("Server restored!");
                 break;
+            }
+            else {
+                *fail_flag_clone_for_failure.lock().unwrap() = false;
             }
         }
     });
