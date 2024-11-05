@@ -1,18 +1,21 @@
-use tokio::net::UdpSocket;
 use std::io::{self};
 use std::process;
-use std::time::Duration;
-use tokio::time::{sleep, timeout};
-use sysinfo::{System, SystemExt, ProcessExt};
 use std::sync::Arc;
+use std::time::Duration;
+use sysinfo::{ProcessExt, System, SystemExt};
+use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
+use tokio::time::{sleep, timeout};
 
 pub async fn server_election(socket: &Arc<Mutex<UdpSocket>>, peers: Vec<&str>) -> io::Result<bool> {
     let cpu_usage = match get_cpu_usage() {
         Some(usage) => usage,
         None => {
             eprintln!("Failed to retrieve CPU usage.");
-            return Err(io::Error::new(io::ErrorKind::Other, "Failed to retrieve CPU usage."));
+            return Err(io::Error::new(
+                io::ErrorKind::Other,
+                "Failed to retrieve CPU usage.",
+            ));
         }
     };
 
@@ -33,7 +36,11 @@ pub async fn server_election(socket: &Arc<Mutex<UdpSocket>>, peers: Vec<&str>) -
     let mut received_responses = Vec::new();
     let mut buffer = [0u8; 32];
     for _ in 0..peers.len() {
-        let result = timeout(Duration::from_secs(15), socket.lock().await.recv_from(&mut buffer)).await;
+        let result = timeout(
+            Duration::from_secs(15),
+            socket.lock().await.recv_from(&mut buffer),
+        )
+        .await;
         match result {
             Ok(Ok((size, _))) => {
                 let message = &buffer[..size];
@@ -60,7 +67,10 @@ pub async fn server_election(socket: &Arc<Mutex<UdpSocket>>, peers: Vec<&str>) -
 
     let leader = received_responses[0].1 == server_id as u32;
     if leader {
-        println!("This server (Process ID: {}) is elected as the leader.", server_id);
+        println!(
+            "This server (Process ID: {}) is elected as the leader.",
+            server_id
+        );
     } else {
         println!("Server (Process ID: {}) is not the leader.", server_id);
     }
@@ -68,7 +78,11 @@ pub async fn server_election(socket: &Arc<Mutex<UdpSocket>>, peers: Vec<&str>) -
     // Confirm the leader to peers
     if leader {
         for peer_address in &peers {
-            socket.lock().await.send_to(b"Leader Confirmed", peer_address).await?;
+            socket
+                .lock()
+                .await
+                .send_to(b"Leader Confirmed", peer_address)
+                .await?;
         }
     }
 
