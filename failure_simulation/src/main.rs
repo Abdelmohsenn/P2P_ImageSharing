@@ -9,8 +9,8 @@ async fn main() -> Result<(), Box<dyn Error>> {
     // List of target addresses (IP:Port)
     let targets = vec![
         "127.0.0.1:9000".parse::<SocketAddr>()?,
-        // "127.0.0.1:9001".parse::<SocketAddr>()?,
-        // "127.0.0.1:9002".parse::<SocketAddr>()?,
+        "127.0.0.1:9001".parse::<SocketAddr>()?,
+        "127.0.0.1:9002".parse::<SocketAddr>()?,
     ];
 
     // Create a UDP socket bound to a random local port
@@ -22,7 +22,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!("Starting UDP message sender...");
 
     // Message to send
-    let message = "SLEEP";
+    let message = "FAIL";
 
     // Loop to send the message every 60 seconds
     loop {

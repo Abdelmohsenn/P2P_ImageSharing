@@ -108,16 +108,17 @@ async fn main() -> io::Result<()> {
             let message = String::from_utf8_lossy(&buffer[..size]);
             println!("Message received from {}: {}", addr, message);
     
-            if message.trim() == "SLEEP" {
+            if message.trim() == "FAIL" {
                 *fail_flag_clone_for_failure.lock().unwrap() = true;
-                println!("Received SLEEP command. Sleeping...");
+                println!("This server is down!");
                 thread::sleep(Duration::from_secs(60));
                 println!("Server restored!");
+                *fail_flag_clone_for_failure.lock().unwrap() = false;
                 break;
             }
-            else {
-                *fail_flag_clone_for_failure.lock().unwrap() = false;
-            }
+            // else {
+            //     *fail_flag_clone_for_failure.lock().unwrap() = false;
+            // }
         }
     });
     
