@@ -8,6 +8,9 @@ use std::time::Duration;
 async fn main() -> Result<(), Box<dyn Error>> {
     // List of target addresses (IP:Port)
     let targets = vec![
+        // "10.7.19.179:9000".parse::<SocketAddr>()?, 
+        // "10.7.16.113:9001".parse::<SocketAddr>()?,
+        // "10.7.17.170:9002".parse::<SocketAddr>()?,
         "127.0.0.1:9000".parse::<SocketAddr>()?,
         "127.0.0.1:9001".parse::<SocketAddr>()?,
         "127.0.0.1:9002".parse::<SocketAddr>()?,
@@ -41,6 +44,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
 
         // Wait for 60 seconds before sending the next message
-        tokio::time::sleep(Duration::from_secs(120)).await;
+        tokio::time::sleep(Duration::from_secs(60)).await;
     }
 }

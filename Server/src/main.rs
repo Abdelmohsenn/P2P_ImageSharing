@@ -111,14 +111,11 @@ async fn main() -> io::Result<()> {
             if message.trim() == "FAIL" {
                 *fail_flag_clone_for_failure.lock().unwrap() = true;
                 println!("This server is down!");
-                thread::sleep(Duration::from_secs(60));
+                thread::sleep(Duration::from_secs(30));
                 println!("Server restored!");
                 *fail_flag_clone_for_failure.lock().unwrap() = false;
                 break;
             }
-            // else {
-            //     *fail_flag_clone_for_failure.lock().unwrap() = false;
-            // }
         }
     });
     
@@ -182,7 +179,7 @@ async fn main() -> io::Result<()> {
                         .send_to(format!("NACK {}", expected_sequence_num).as_bytes(), addr)
                         .await
                         .unwrap();
-                    println!("NACK sent for sequence number {}", expected_sequence_num);
+                    // println!("NACK sent for sequence number {}", expected_sequence_num);
                 }
                 continue;
             }
