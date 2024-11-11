@@ -165,6 +165,7 @@ pub async fn middleware() -> io::Result<()> {
                         .send_to(format!("NACK {}", expected_sequence_num).as_bytes(), addr)
                         .await
                         .unwrap();
+                        println!("NACK sent for sequence number {}", expected_sequence_num);
                 }
                 continue;
             }
@@ -181,6 +182,7 @@ pub async fn middleware() -> io::Result<()> {
                     .send_to(format!("NACK {}", expected_sequence_num).as_bytes(), addr)
                     .await
                     .unwrap();
+                println!("NACK sent for sequence number {}", expected_sequence_num);
                 continue;
             }
 
@@ -194,6 +196,7 @@ pub async fn middleware() -> io::Result<()> {
                     )
                     .await
                     .unwrap();
+                    println!("ACK sent for sequence number {}", expected_sequence_num - 1);
             }
         }
     });
