@@ -5,7 +5,7 @@ use std::time::Duration;
 use sysinfo::{ProcessExt, System, SystemExt};
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
-use tokio::time::{timeout};
+use tokio::time::{timeout,Instant};
 
 pub async fn server_election(socket: &Arc<Mutex<UdpSocket>>, peers: Vec<&str>) -> io::Result<bool> {
     let cpu_usage = match get_cpu_usage() {
@@ -23,8 +23,10 @@ pub async fn server_election(socket: &Arc<Mutex<UdpSocket>>, peers: Vec<&str>) -
     println!("CPU Usage: {:.2}%", cpu_usage);
     println!("Server Process ID: {}", server_id);
 
+    // Convert CPU usage and server ID to bytes
     let cpu_bytes = cpu_usage.to_be_bytes();
     let id_bytes = server_id.to_be_bytes();
+    // Concatenate CPU usage and server ID into a single message
     let message = [&cpu_bytes[..], &id_bytes[..]].concat();
 
     // Broadcast CPU usage and server ID to all peers
@@ -35,12 +37,15 @@ pub async fn server_election(socket: &Arc<Mutex<UdpSocket>>, peers: Vec<&str>) -
     // Collect responses from peers
     let mut received_responses = Vec::new();
     let mut buffer = [0u8; 32];
-    for _ in 0..peers.len() {
-        let result = timeout(
-            Duration::from_secs(15),
-            socket.lock().await.recv_from(&mut buffer),
-        )
-        .await;
+    let expected_responses = peers.len();
+    let timeout_duration = Duration::from_secs(5);
+    let start_time = Instant::now();
+
+    while received_responses.len() < expected_responses && start_time.elapsed() < timeout_duration {
+        // Calculate the remaining time for the timeout
+        let remaining_time = timeout_duration.checked_sub(start_time.elapsed()).unwrap_or_default();
+        let result = timeout(remaining_time, socket.lock().await.recv_from(&mut buffer)).await;
+
         match result {
             Ok(Ok((size, _))) => {
                 let message = &buffer[..size];
@@ -54,16 +59,26 @@ pub async fn server_election(socket: &Arc<Mutex<UdpSocket>>, peers: Vec<&str>) -
                 eprintln!("Error receiving message from peer: {:?}", e);
             }
             Err(_) => {
-                eprintln!("Timeout reached, no message received from one of the peers.");
+                // If the timeout is reached, we simply break out of the loop
+                eprintln!("Timeout reached, no more messages received.");
+                break;
             }
         }
+    }
+    // Check if any responses were received, if not, assume leadership
+    if received_responses.is_empty() {
+        println!(
+            "No responses received. This server (Process ID: {}) assumes leadership.",
+            server_id
+        );
+        return Ok(true);
     }
 
     // Add own server's data to the list
     received_responses.push((cpu_usage, server_id as u32));
 
-    // Determine the leader
-    received_responses.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then_with(|| a.1.cmp(&b.1)));
+    // Determine the leader by sorting
+    received_responses.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap().then_with(|| b.1.cmp(&a.1)));
 
     let leader = received_responses[0].1 == server_id as u32;
     if leader {
