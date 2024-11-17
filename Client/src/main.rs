@@ -1,35 +1,44 @@
+use csv::Writer;
 use image::{DynamicImage, ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
+use serde_json::json;
+use std::fs;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io::{self, Cursor, Write};
 use std::net::SocketAddr;
+use std::path::Path;
 use std::time::Instant;
 use steganography::decoder::Decoder;
-use steganography::util::str_to_bytes;
 use steganography::encoder::Encoder;
-use steganography::util::save_image_buffer;
-use steganography::util::file_as_image_buffer;
 use steganography::util::bytes_to_str;
 use steganography::util::file_as_dynamic_image;
+use steganography::util::file_as_image_buffer;
+use steganography::util::save_image_buffer;
+use steganography::util::str_to_bytes;
 use tokio::net::UdpSocket;
 use tokio::time::{sleep, timeout, Duration};
-use std::fs;
-use std::path::Path;
-use csv::Writer;
-use std::fs::{OpenOptions};
 
+// struct for image stats
 struct ImageStats {
-    uid: String,        // Unique identifier
-    img_id: String,     // Image identifier
-    num_of_views: u8   // Number of views (using unsigned 8-bit integer)
+    client_id: String, // Unique identifier
+    img_id: String,    // Image identifier
+    num_of_views: u8,  // Number of views (using unsigned 8-bit integer)
+}
+// struct for online status
+#[derive(Serialize, Deserialize)]
+struct OnlineStatus {
+    status: bool,
+    client_id: String,
+    sample_imgs: Vec<String>,
 }
 
-
-/// Checks if a file has an image extension.
+// Checks if a file has an image extension.
 fn is_image_file(file_name: &str) -> bool {
     let image_extensions = ["png", "jpg", "jpeg", "gif"];
     if let Some(extension) = Path::new(file_name).extension() {
-        return image_extensions.iter()
+        return image_extensions
+            .iter()
             .any(|&ext| ext.eq_ignore_ascii_case(extension.to_str().unwrap_or("")));
     }
     false
@@ -38,12 +47,12 @@ fn is_image_file(file_name: &str) -> bool {
 /// Retrieves all image file paths in a directory.
 fn get_image_paths(dir: &str) -> Result<Vec<String>, std::io::Error> {
     let mut image_paths = Vec::new();
-    
+
     // Read the directory
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();
-        
+
         // If the entry is a file and has an image extension, add to the list
         if path.is_file() {
             if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
@@ -58,7 +67,7 @@ fn get_image_paths(dir: &str) -> Result<Vec<String>, std::io::Error> {
 }
 
 // The middleware function containibg the logic for the client such as communicating with the servers and sending messages to the servers
-async fn middleware(socket: &UdpSocket, socket6: &UdpSocket, image_path: &str) -> io::Result<()> {
+async fn middleware(socket: &UdpSocket, socket6: &UdpSocket) -> io::Result<()> {
     let mut buffer = [0u8; 2048];
     let mut leader_address = String::new();
 
@@ -96,16 +105,16 @@ async fn middleware(socket: &UdpSocket, socket6: &UdpSocket, image_path: &str) -
     }
 
     // Allows user to input image path (one-by-one)
-    // let mut input = String::new();
-    // println!("Enter your Image Path to send to the server: ");
-    // io::stdin()
-        // .read_line(&mut input)
-        // .expect("Failed to read line");
-    // let input = input.trim();
-    let start = Instant::now();
-    let format = image::guess_format(&std::fs::read(image_path).expect("Failed to read the image file"))
+    let mut input = String::new();
+    println!("Enter your Image Path to send to the server: ");
+    io::stdin()
+        .read_line(&mut input)
+        .expect("Failed to read line");
+    let input = input.trim();
+    // let start = Instant::now();
+    let format = image::guess_format(&std::fs::read(input).expect("Failed to read the image file"))
         .unwrap_or(ImageFormat::Jpeg);
-    let img = image::open(image_path).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+    let img = image::open(input).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     let mut buf = Cursor::new(Vec::new());
     img.write_to(&mut buf, format)
         .expect("Failed to convert image to bytes");
@@ -286,106 +295,100 @@ async fn middleware(socket: &UdpSocket, socket6: &UdpSocket, image_path: &str) -
     let mut encrypted_image_file = File::create(encrypted_image_path)?;
     encrypted_image_file.write_all(&encrypted_image_data)?;
     println!("Encrypted image saved as PNG at {}", encrypted_image_path);
-    let duration = start.elapsed();
-    println!("{:?}", duration);
 
+    // let duration = start.elapsed();
+    // println!("{:?}", duration);
+
+    // // // // mn hena, example lel view encryption / / / / // / / /
     let stats = ImageStats {
-        uid: String::from("127.0.0.1_1"),
+        client_id: String::from("5"),
         img_id: String::from("596132"),
-        num_of_views: 10
+        num_of_views: 10,
     };
-    
     // Define a secret message to hide in our picture
     let views = stats.num_of_views.to_string();
     println!("Encoding message: {}", views);
-    
     // Convert our string to bytes
     let payload = str_to_bytes(&views);
     println!("Payload bytes: {:?}", payload);
-    
     // Load the image where we want to embed our secret message
     let destination_image = file_as_dynamic_image("encrypted_image_from_server.png".to_string());
-    
     // Create an encoder
     let enc = Encoder::new(payload, destination_image);
-    
     // Encode our message into the alpha channel of the image
     let result = enc.encode_alpha();
-    
     // Save the new image
     save_image_buffer(result, "hidden_message.png".to_string());
-    
     // Load the image with the secret message
     let encoded_image = file_as_image_buffer("hidden_message.png".to_string());
-    
     // Create a decoder
     let dec = Decoder::new(encoded_image);
-    
     // Decode the image by reading the alpha channel
     let out_buffer = dec.decode_alpha();
-    
     // Filter out padding bytes and null bytes
-    let clean_buffer: Vec<u8> = out_buffer.into_iter()
+    let clean_buffer: Vec<u8> = out_buffer
+        .into_iter()
         .filter(|&b| b != 0xff && b != 0x00)
         .take(payload.len()) // Only take as many bytes as we originally encoded
         .collect();
-    
     println!("Decoded bytes: {:?}", clean_buffer);
-    
     // Convert bytes to string with proper error handling
     let message = String::from_utf8_lossy(&clean_buffer).into_owned();
     println!("Decoded message: {}", message);
+    // / / // /  / leghayt hena / nehayt el view encryption / / // / / /
 
-    let filename = "durations.csv";
-    let file_exists = std::path::Path::new(filename).exists();
-    let mut file = OpenOptions::new()
-        .append(true)  // Append to the file instead of overwriting it
-        .create(true)  // Create the file if it doesn't exist
-        .open(filename)?;
-    
-    if !file_exists {
-        writeln!(file, "roundtrip_duration,server")?;
-    }
-    let mut wtr = Writer::from_writer(file);
-    let duration_in_seconds = format!("{:.2}", duration.as_secs_f64()); // Convert Duration to seconds (floating point)
-    let mut server: &str = "";
+    //  // // // // Stress testing // // // //
+    // fn StressTesting() {
+    //     let filename = "durations.csv";
+    //     let file_exists = std::path::Path::new(filename).exists();
+    //     let mut file = OpenOptions::new()
+    //         .append(true) // Append to the file instead of overwriting it
+    //         .create(true) // Create the file if it doesn't exist
+    //         .open(filename)?;
 
-    if leader_address == "127.0.0.1:8082" {
-        server = "1";
-    }
-    else if leader_address == "127.0.0.1:8081" {
-        server = "2";
-    }
-    else if leader_address == "127.0.0.1:2012" {
-        server = "3"
-    }
-    wtr.write_record(&[duration_in_seconds.to_string(), server.to_string()])?;  // Write the duration as a string
-    wtr.flush()?;  // Ensure the data is written to the file
+    //     if !file_exists {
+    //         writeln!(file, "roundtrip_duration,server")?;
+    //     }
+    //     let mut wtr = Writer::from_writer(file);
+    //     let duration_in_seconds = format!("{:.2}", duration.as_secs_f64()); // Convert Duration to seconds (floating point)
+    //     let mut server: &str = "";
+
+    //     if leader_address == "127.0.0.1:8082" {
+    //         server = "1";
+    //     } else if leader_address == "127.0.0.1:8081" {
+    //         server = "2";
+    //     } else if leader_address == "127.0.0.1:2012" {
+    //         server = "3"
+    //     }
+    //     wtr.write_record(&[duration_in_seconds.to_string(), server.to_string()])?; // Write the duration as a string
+    //     wtr.flush()?; // Ensure the data is written to the file
+    // }
 
     // decrypt the image
     let encrypted_image = file_as_dynamic_image(encrypted_image_path.to_string()).to_rgba();
     let decoder = Decoder::new(encrypted_image);
     let decrypted_data = decoder.decode_alpha();
     let output_path = "decrypted_image.png";
-    std::fs::write(output_path, &decrypted_data)?;
-
+    std::fs::write(output_path, &decrypted_data)?; // Save the decrypted image to a file
     println!("Decrypted image saved successfully as PNG!");
     Ok(())
 }
 
 #[tokio::main]
 async fn main() -> io::Result<()> {
-    let dir = "./images";
-    match get_image_paths(dir) {
-        Ok(image_paths) => {
-            for path in image_paths {
-                println!("{}", path);
-            }
-        }
-        Err(e) => eprintln!("Error reading directory: {}", e),
-    }
-    let mut image_paths = get_image_paths(dir).unwrap();
+    let mut count = 0;
+    // let dir = "./images";
+    // match get_image_paths(dir) {
+    //     Ok(image_paths) => {
+    //         for path in image_paths {
+    //             println!("{}", path);
+    //         }
+    //     }
+    //     Err(e) => eprintln!("Error reading directory: {}", e),
+    // }
+    // let mut image_paths = get_image_paths(dir).unwrap();
     // loop to keep the client running
+
     loop {
         // Check if the IP addresses and port numbers of the three servers are provided
         // if args.len() != N+1 {
@@ -399,6 +402,14 @@ async fn main() -> io::Result<()> {
         // args[args.len() - 1].clone(),
         // ];
 
+        // struct for directory of service filling
+        let info = OnlineStatus {
+            status: true,
+            client_id: "5".to_string(),
+            sample_imgs: vec!["image1.png".to_string(), "image2.png".to_string()],
+        };
+        let info_bytes = serde_json::to_vec(&info).unwrap();
+
         // multicast to all servers
         let servers: Vec<SocketAddr> = vec![
             "127.0.0.1:8083".parse().unwrap(),
@@ -410,31 +421,34 @@ async fn main() -> io::Result<()> {
         let socket = UdpSocket::bind(clientaddress).await?;
         let socket6 = UdpSocket::bind("127.0.0.1:2005").await?; // socket for encrypted image recieving
 
+        // sending the Client status & info to all servers
+        if count == 0 {
+            for addr in &servers {
+                socket.send_to(&info_bytes, addr).await?;
+                println!("Client status and info is sent to {} ", addr);
+                count += 1;
+            }
+        }
         let mut input = String::new();
-        // println!("Do you want to start Sending Message? (y/n): ");
-        // io::stdin()
-            // .read_line(&mut input)
-            // .expect("Failed to read input");
+        println!("Do you want to start Sending Message? (y/n): ");
+        io::stdin()
+            .read_line(&mut input)
+            .expect("Failed to read input");
 
         // if yes, send ELECT message to all servers
-        // if input.trim().eq_ignore_ascii_case("y") {
-        //     for addr in &servers {
-        //         socket.send_to(b"ELECT", addr).await?;
-        //         println!("message sent to {}", addr);
-        //     }
-        // }
-        for addr in &servers {
-            socket.send_to(b"ELECT", addr).await?;
-            println!("message sent to {}", addr);
+        if input.trim().eq_ignore_ascii_case("y") {
+            for addr in &servers {
+                socket.send_to(b"ELECT", addr).await?;
+                println!("message sent to {}", addr);
+            }
         }
-
         // Call the middleware function that handles everything
-        middleware(&socket, &socket6, &image_paths[0]).await?;
-        
-        if !image_paths.is_empty() {
-            let first_image = image_paths.remove(0); // Removes the first element
-            println!("Removed first image path: {}", first_image);
-        }
+        middleware(&socket, &socket6).await?;
+
+        // if !image_paths.is_empty() {
+        //     let first_image = image_paths.remove(0); // Removes the first element
+        //     println!("Removed first image path: {}", first_image);
+        // }
     }
     Ok(())
 }
