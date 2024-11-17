@@ -5,7 +5,11 @@ use std::time::Duration;
 use sysinfo::{ProcessExt, System, SystemExt};
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
+<<<<<<< Updated upstream
 use tokio::time::{timeout,Instant};
+=======
+use tokio::time::timeout;
+>>>>>>> Stashed changes
 
 pub async fn server_election(socket: &Arc<Mutex<UdpSocket>>, peers: Vec<&str>) -> io::Result<bool> {
     let cpu_usage = match get_cpu_usage() {

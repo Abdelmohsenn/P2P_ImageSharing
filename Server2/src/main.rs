@@ -1,6 +1,6 @@
 use std::io;
-mod middleware;
 mod bully_election;
+mod middleware;
 
 #[tokio::main]
 async fn main() -> io::Result<()> {

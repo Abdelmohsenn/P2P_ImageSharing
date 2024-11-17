@@ -5,10 +5,13 @@ use std::thread;
 use std::time::Instant;
 use steganography::encoder::*;
 use steganography::util::file_as_dynamic_image;
+use tokio::io;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, timeout, Duration};
-use tokio::io;
+use std::fs;
+use csv::Writer;
+use std::fs::{OpenOptions};
 
 use crate::bully_election::server_election;
 
@@ -109,7 +112,7 @@ pub async fn middleware() -> io::Result<()> {
     let (tx, mut rx): (
         mpsc::Sender<(Vec<u8>, std::net::SocketAddr)>,
         mpsc::Receiver<(Vec<u8>, std::net::SocketAddr)>,
-    ) = mpsc::channel(32); 
+    ) = mpsc::channel(32);
     let socket_clone_client = Arc::clone(&socket_client);
 
     tokio::spawn(async move {
@@ -147,7 +150,7 @@ pub async fn middleware() -> io::Result<()> {
                     }
                     println!("Image saved successfully!");
 
-                    tx.send((image_data.clone(), addr)).await.unwrap(); 
+                    tx.send((image_data.clone(), addr)).await.unwrap();
                     image_data.clear();
                     received_chunks = 0;
                     expected_sequence_num = 0;
@@ -165,7 +168,7 @@ pub async fn middleware() -> io::Result<()> {
                         .send_to(format!("NACK {}", expected_sequence_num).as_bytes(), addr)
                         .await
                         .unwrap();
-                        println!("NACK sent for sequence number {}", expected_sequence_num);
+                    println!("NACK sent for sequence number {}", expected_sequence_num);
                 }
                 continue;
             }
@@ -196,7 +199,7 @@ pub async fn middleware() -> io::Result<()> {
                     )
                     .await
                     .unwrap();
-                    println!("ACK sent for sequence number {}", expected_sequence_num - 1);
+                println!("ACK sent for sequence number {}", expected_sequence_num - 1);
             }
         }
     });
@@ -217,7 +220,37 @@ pub async fn middleware() -> io::Result<()> {
 
             let encoder = Encoder::new(&image_data, mask);
             let encrypted_img = encoder.encode_alpha();
-            println!("Encryption Time: {:?}", start.elapsed());
+            let duration = start.elapsed();
+            println!("Encryption Time: {:?}", duration);
+
+            let filename = "server3_encryption_times.csv";
+            let file_exists = std::path::Path::new(filename).exists();
+            match OpenOptions::new().append(true).create(true).open(filename) {
+                Ok(mut file) => {
+                    if !file_exists {
+                        if let Err(e) = writeln!(file, "encryption_time") {
+                            eprintln!("Failed to write header: {}", e);
+                            return;
+                        }
+                    }
+
+                    let mut wtr = Writer::from_writer(file);
+                    let duration_in_seconds = format!("{:.2}", duration.as_secs_f64());
+
+                    if let Err(e) = wtr.write_record(&[duration_in_seconds.to_string()]) {
+                        eprintln!("Failed to write record: {}", e);
+                        return;
+                    }
+
+                    if let Err(e) = wtr.flush() {
+                        eprintln!("Failed to flush writer: {}", e);
+                        return;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Failed to open file: {}", e);
+                }
+            }
 
             // Save the encrypted image as PNG to avoid lossy compression
             let encrypted_image_path = "encrypted-image.png";
