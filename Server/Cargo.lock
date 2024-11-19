@@ -6,8 +6,11 @@ version = 3
 name = "Server"
 version = "0.1.0"
 dependencies = [
+ "bincode",
  "csv",
  "image 0.24.9",
+ "serde",
+ "serde_json",
  "socket2 0.4.10",
  "steganography",
  "sysinfo",
@@ -60,6 +63,15 @@ dependencies = [
  "object",
  "rustc-demangle",
  "windows-targets",
+]
+
+[[package]]
+name = "bincode"
+version = "1.3.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b1f45e9417d87227c7a56d22e471c6206462cba514c7590c09aff4cf6d1ddcad"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -658,6 +670,18 @@ dependencies = [
  "proc-macro2 1.0.88",
  "quote 1.0.37",
  "syn 2.0.79",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.133"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7fceb2473b9166b2294ef05efcb65a3db80803f0b03ef86a5fc88a2b85ee377"
+dependencies = [
+ "itoa",
+ "memchr",
+ "ryu",
+ "serde",
 ]
 
 [[package]]

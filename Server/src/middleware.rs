@@ -1,5 +1,7 @@
 use crate::bully_election::server_election;
 use csv::Writer;
+use csv::WriterBuilder;
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{Cursor, Write};
@@ -9,16 +11,27 @@ use std::thread;
 use std::time::Instant;
 use steganography::encoder::*;
 use steganography::util::file_as_dynamic_image;
+use tokio::fs::File;
 use tokio::io;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
+use std::os::unix::fs::OpenOptionsExt;
 use tokio::time::{sleep, timeout, Duration};
+
+// struct for online status
+#[derive(Serialize, Deserialize, Debug)]
+struct OnlineStatus {
+    status: bool,
+    client_id: String,
+}
 
 pub async fn middleware() -> io::Result<()> {
     let my_address = "127.0.0.1:8082";
     let peers = vec!["127.0.0.1:8084", "127.0.0.1:2010"];
     let client_address = "127.0.0.1:8080";
+
     let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(my_address).await?));
+
     let socket6 = Arc::new(tokio::sync::Mutex::new(
         UdpSocket::bind("127.0.0.1:2002").await?,
     ));
@@ -26,12 +39,15 @@ pub async fn middleware() -> io::Result<()> {
     let socket_election = Arc::new(tokio::sync::Mutex::new(
         UdpSocket::bind("127.0.0.1:8083").await?,
     ));
+
     let socketsendipback = Arc::new(tokio::sync::Mutex::new(
         UdpSocket::bind("127.0.0.1:8086").await?,
     ));
+
     let failure_socket = Arc::new(tokio::sync::Mutex::new(
         UdpSocket::bind("127.0.0.1:9000").await?,
     ));
+
     let fail_flag = Arc::new(Mutex::new(false));
     let fail_flag_clone = Arc::clone(&fail_flag);
 
@@ -76,7 +92,37 @@ pub async fn middleware() -> io::Result<()> {
                     }
                     Err(e) => eprintln!("Election failed: {:?}", e),
                 }
-            }
+            }  else if message != "ELECT" {
+                match serde_json::from_str::<OnlineStatus>(&message) {
+                    Ok(online_status) => {
+                        println!("{:?}", online_status);
+                        
+                        // let record = format!("{},{},{}\n", 
+                        //     "127.0.0.1_1",
+                        //     online_status.client_id,
+                        //     online_status.status.to_string());
+            
+                        // use std::process::Command;
+                        // let cmd = format!(
+                        //     "echo '{}' | tee -a '/run/user/1000/gvfs/google-drive:host=aucegypt.edu,user=muhammad-azzazy/GVfsSharedDrives/0AOEX5imDJGAXUk9PVA/1xlcW3QuJWlAeWTGSFLe8OjapBAGq4-Hf'", 
+                        //     record.trim()
+                        // );
+            
+                        // match Command::new("sh")
+                        //     .arg("-c")
+                        //     .arg(&cmd)
+                        //     .output() {
+                        //     Ok(output) => {
+                        //         if !output.status.success() {
+                        //             eprintln!("Failed to append: {}", String::from_utf8_lossy(&output.stderr));
+                        //         }
+                        //     },
+                        //     Err(e) => eprintln!("Failed to execute: {}", e),
+                        // }
+                    },
+                    Err(e) => eprintln!("Failed to parse message: {}", e),
+                }
+            }    
         }
     });
 
@@ -358,3 +404,4 @@ pub async fn middleware() -> io::Result<()> {
         sleep(Duration::from_secs(10)).await;
     }
 }
+

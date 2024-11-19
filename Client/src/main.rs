@@ -368,13 +368,8 @@ async fn main() -> io::Result<()> {
         let socket6 = UdpSocket::bind("127.0.0.1:2005").await?; // socket for encrypted image recieving
 
         // sending the Client status & info to all servers
-        if count == 0 {
-            for addr in &servers {
-                socket.send_to(&info_bytes, addr).await?;
-                println!("Client status and info is sent to {} ", addr);
-                count += 1;
-            }
-        }
+        socket.send_to(&info_bytes, servers[0]).await?;
+        
         let mut input = String::new();
         println!("Do you want to start Sending Message? (y/n): ");
         io::stdin()

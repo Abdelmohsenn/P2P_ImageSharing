@@ -12,3 +12,6 @@ socket2 = "0.4"
 sysinfo = "0.29"
 steganography = "1.0.2"
 csv = "1.1"
+serde = { version = "1.0", features = ["derive"] }
+bincode = "1.3" # For binary format
+serde_json = "1.0" # For JSON format
