@@ -439,6 +439,9 @@ async fn main() -> io::Result<()> {
                     socket.send_to(b"ELECT", addr).await?;
                     println!("message sent to {}", addr);
                 }
+            } else if input.trim().eq_ignore_ascii_case("n"){
+                socket.send_to(b"HEARTBEAT", "127.0.0.1:5555").await?;
+
             }
             // Call the middleware function that handles everything
             middleware(&socket, &socket6).await?;

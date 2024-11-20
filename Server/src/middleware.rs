@@ -14,11 +14,11 @@ use steganography::util::file_as_dynamic_image;
 use tokio::fs::File;
 use tokio::io;
 use tokio::net::UdpSocket;
+use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use std::os::unix::fs::OpenOptionsExt;
+// use std::os::unix::fs::OpenOptionsExt;
 use tokio::time::{sleep, timeout, Duration};
 // use google_drive3::{DriveHub, hyper, hyper_rustls, oauth2, oauth2::InstalledFlowAuthenticator, oauth2::InstalledFlowReturnMethod};
-
 
 // struct for online status
 #[derive(Serialize, Deserialize, Debug)]
@@ -26,7 +26,31 @@ struct OnlineStatus {
     status: bool,
     client_id: String,
 }
+async fn check_client_alive(addr: &str) -> bool {
+    // Attempt to connect with a timeout
+    let connection_timeout = Duration::from_secs(3);
 
+    match timeout(connection_timeout, TcpStream::connect(addr)).await {
+        Ok(Ok(_)) => true,   // Successfully connected
+        Ok(Err(_)) => false, // Failed to connect within timeout
+        Err(_) => false,     // Timeout occurred
+    }
+}
+async fn start_server_health_check(addr: &str) {
+    let check_interval = Duration::from_secs(5);
+
+    let mut interval = tokio::time::interval(check_interval);
+    loop {
+        interval.tick().await;
+
+        let start = Instant::now();
+        if check_client_alive(addr).await {
+            println!("Client is alive! (checked in {:?})", start.elapsed());
+        } else {
+            println!("Client is down! (timeout reached)");
+        }
+    }
+}
 pub async fn middleware() -> io::Result<()> {
     let my_address = "127.0.0.1:8082";
     let peers = vec!["127.0.0.1:8084", "127.0.0.1:2010"];
@@ -94,24 +118,25 @@ pub async fn middleware() -> io::Result<()> {
                     }
                     Err(e) => eprintln!("Election failed: {:?}", e),
                 }
-            }  else if message != "ELECT" {
+            } else if message != "ELECT" {
                 match serde_json::from_str::<OnlineStatus>(&message) {
                     Ok(online_status) => {
                         println!("{:?}", online_status);
-            
-                        let record = format!("{},{},{}\n", 
-                            "127.0.0.1_1",
+
+                        let record = format!(
+                            "{},{},{}\n",
                             online_status.client_id,
+                            "127.0.0.1_1",
                             online_status.status.to_string(),
                         );
-            
+
                         // Temporary local file
                         let local_temp_file = "/tmp/temp_file.csv";
-            
+
                         use std::fs::OpenOptions;
                         use std::io::{self, Write};
                         use std::process::Command;
-            
+
                         // Append the record to the local temporary file
                         match OpenOptions::new()
                             .append(true)
@@ -123,38 +148,38 @@ pub async fn middleware() -> io::Result<()> {
                                     eprintln!("Failed to write record to local temp file: {}", e);
                                     return;
                                 }
-                            },
+                            }
                             Err(e) => {
                                 eprintln!("Failed to open local temp file: {}", e);
                                 return;
                             }
                         }
-            
-                        // Copy the local temporary file to the Google Drive path
-                        let google_drive_file = "/run/user/1000/gvfs/google-drive:host=aucegypt.edu,user=muhammad-azzazy/GVfsSharedDrives/0AOEX5imDJGAXUk9PVA/1xlcW3QuJWlAeWTGSFLe8OjapBAGq4-Hf";
-            
-                        let result = Command::new("cp")
-                            .arg(local_temp_file)
-                            .arg(google_drive_file)
-                            .output();
-            
-                        match result {
-                            Ok(output) => {
-                                if !output.status.success() {
-                                    eprintln!(
-                                        "Failed to copy file to Google Drive: {}",
-                                        String::from_utf8_lossy(&output.stderr)
-                                    );
-                                } else {
-                                    println!("Record appended successfully!");
-                                }
-                            }
-                            Err(e) => eprintln!("Failed to execute copy command: {}", e),
-                        }
-                    },
+                    }
                     Err(e) => eprintln!("Failed to parse message: {}", e),
                 }
-            }                        
+            }
+        }
+    });
+    /////// Heartbeat Thread //////
+    let heartbeat_socket = Arc::new(tokio::sync::Mutex::new(
+        UdpSocket::bind("127.0.0.1:5555").await?,
+    )); // this is the heartbeat socket
+    tokio::spawn(async move {
+        let mut buffer = [0u8; 2048];
+        loop {
+            let (size, addr) = heartbeat_socket
+                .lock()
+                .await
+                .recv_from(&mut buffer)
+                .await
+                .expect("Failed to receive message");
+
+            let message = String::from_utf8_lossy(&buffer[..size]);
+            println!("Message received from {}: {}", addr, message);
+
+            if message.trim() == "HEARTBEAT" {
+                println!("Client has gone offline!");
+            }
         }
     });
 
@@ -436,4 +461,3 @@ pub async fn middleware() -> io::Result<()> {
         sleep(Duration::from_secs(10)).await;
     }
 }
-

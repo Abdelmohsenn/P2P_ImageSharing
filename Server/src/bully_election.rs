@@ -5,7 +5,7 @@ use std::time::Duration;
 use sysinfo::{ProcessExt, System, SystemExt};
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
-use tokio::time::{timeout,Instant};
+use tokio::time::{timeout, Instant};
 
 pub async fn server_election(socket: &Arc<Mutex<UdpSocket>>, peers: Vec<&str>) -> io::Result<bool> {
     let cpu_usage = match get_cpu_usage() {
@@ -43,7 +43,9 @@ pub async fn server_election(socket: &Arc<Mutex<UdpSocket>>, peers: Vec<&str>) -
 
     while received_responses.len() < expected_responses && start_time.elapsed() < timeout_duration {
         // Calculate the remaining time for the timeout
-        let remaining_time = timeout_duration.checked_sub(start_time.elapsed()).unwrap_or_default();
+        let remaining_time = timeout_duration
+            .checked_sub(start_time.elapsed())
+            .unwrap_or_default();
         let result = timeout(remaining_time, socket.lock().await.recv_from(&mut buffer)).await;
 
         match result {
