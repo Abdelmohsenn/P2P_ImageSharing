@@ -17,6 +17,8 @@ use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use std::os::unix::fs::OpenOptionsExt;
 use tokio::time::{sleep, timeout, Duration};
+// use google_drive3::{DriveHub, hyper, hyper_rustls, oauth2, oauth2::InstalledFlowAuthenticator, oauth2::InstalledFlowReturnMethod};
+
 
 // struct for online status
 #[derive(Serialize, Deserialize, Debug)]
@@ -96,33 +98,63 @@ pub async fn middleware() -> io::Result<()> {
                 match serde_json::from_str::<OnlineStatus>(&message) {
                     Ok(online_status) => {
                         println!("{:?}", online_status);
-                        
-                        // let record = format!("{},{},{}\n", 
-                        //     "127.0.0.1_1",
-                        //     online_status.client_id,
-                        //     online_status.status.to_string());
             
-                        // use std::process::Command;
-                        // let cmd = format!(
-                        //     "echo '{}' | tee -a '/run/user/1000/gvfs/google-drive:host=aucegypt.edu,user=muhammad-azzazy/GVfsSharedDrives/0AOEX5imDJGAXUk9PVA/1xlcW3QuJWlAeWTGSFLe8OjapBAGq4-Hf'", 
-                        //     record.trim()
-                        // );
+                        let record = format!("{},{},{}\n", 
+                            "127.0.0.1_1",
+                            online_status.client_id,
+                            online_status.status.to_string(),
+                        );
             
-                        // match Command::new("sh")
-                        //     .arg("-c")
-                        //     .arg(&cmd)
-                        //     .output() {
-                        //     Ok(output) => {
-                        //         if !output.status.success() {
-                        //             eprintln!("Failed to append: {}", String::from_utf8_lossy(&output.stderr));
-                        //         }
-                        //     },
-                        //     Err(e) => eprintln!("Failed to execute: {}", e),
-                        // }
+                        // Temporary local file
+                        let local_temp_file = "/tmp/temp_file.csv";
+            
+                        use std::fs::OpenOptions;
+                        use std::io::{self, Write};
+                        use std::process::Command;
+            
+                        // Append the record to the local temporary file
+                        match OpenOptions::new()
+                            .append(true)
+                            .create(true)
+                            .open(local_temp_file)
+                        {
+                            Ok(mut file) => {
+                                if let Err(e) = file.write_all(record.as_bytes()) {
+                                    eprintln!("Failed to write record to local temp file: {}", e);
+                                    return;
+                                }
+                            },
+                            Err(e) => {
+                                eprintln!("Failed to open local temp file: {}", e);
+                                return;
+                            }
+                        }
+            
+                        // Copy the local temporary file to the Google Drive path
+                        let google_drive_file = "/run/user/1000/gvfs/google-drive:host=aucegypt.edu,user=muhammad-azzazy/GVfsSharedDrives/0AOEX5imDJGAXUk9PVA/1xlcW3QuJWlAeWTGSFLe8OjapBAGq4-Hf";
+            
+                        let result = Command::new("cp")
+                            .arg(local_temp_file)
+                            .arg(google_drive_file)
+                            .output();
+            
+                        match result {
+                            Ok(output) => {
+                                if !output.status.success() {
+                                    eprintln!(
+                                        "Failed to copy file to Google Drive: {}",
+                                        String::from_utf8_lossy(&output.stderr)
+                                    );
+                                } else {
+                                    println!("Record appended successfully!");
+                                }
+                            }
+                            Err(e) => eprintln!("Failed to execute copy command: {}", e),
+                        }
                     },
                     Err(e) => eprintln!("Failed to parse message: {}", e),
                 }
-            }    
+            }                        
         }
     });
 

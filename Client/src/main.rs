@@ -3,6 +3,7 @@ use image::{DynamicImage, ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs;
+use std::fs::read_to_string;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::{self, Cursor, Write};
@@ -23,15 +24,19 @@ async fn send_image(socket: &UdpSocket) -> io::Result<()> {
     // Prompt the user for the image path
     let mut input = String::new();
     println!("Enter your Image Path to send to the server: ");
-    io::stdin().read_line(&mut input).expect("Failed to read line");
+    io::stdin()
+        .read_line(&mut input)
+        .expect("Failed to read line");
     let image_path = input.trim(); // Trim to remove any extraneous whitespace or newlines
 
     // Load the image from the given path
-    let format = image::guess_format(&std::fs::read(image_path).expect("Failed to read the image file"))
-        .unwrap_or(ImageFormat::Jpeg);
+    let format =
+        image::guess_format(&std::fs::read(image_path).expect("Failed to read the image file"))
+            .unwrap_or(ImageFormat::Jpeg);
     let img = image::open(image_path).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     let mut buf = Cursor::new(Vec::new());
-    img.write_to(&mut buf, format).expect("Failed to convert image to bytes");
+    img.write_to(&mut buf, format)
+        .expect("Failed to convert image to bytes");
     let image_bytes = buf.into_inner();
 
     // Image chunking setup
@@ -54,12 +59,20 @@ async fn send_image(socket: &UdpSocket) -> io::Result<()> {
         chunk.extend_from_slice(chunk_data);
 
         socket.send(&chunk).await?;
-        println!("Sent chunk {} of {} with sequence number {}", i + 1, total_chunks, sequence_num);
+        println!(
+            "Sent chunk {} of {} with sequence number {}",
+            i + 1,
+            total_chunks,
+            sequence_num
+        );
 
         if i == total_chunks - 1 {
             // Send "END" message
             let mut end_message = Vec::with_capacity(4 + 3);
-            println!("Sending END message... with sequence number {}", sequence_num);
+            println!(
+                "Sending END message... with sequence number {}",
+                sequence_num
+            );
             end_message.extend_from_slice(&(sequence_num + 1).to_be_bytes());
             end_message.extend_from_slice(b"END");
             socket.send(&end_message).await?;
@@ -142,11 +155,7 @@ async fn resend_last_batch(
         chunk.extend_from_slice(chunk_data);
 
         socket.send(&chunk).await?;
-        println!(
-            "Resent chunk {} with sequence number {}",
-            j + 1,
-            j
-        );
+        println!("Resent chunk {} with sequence number {}", j + 1, j);
         sleep(Duration::from_millis(5)).await;
     }
     Ok(())
@@ -163,7 +172,6 @@ struct ImageStats {
 struct OnlineStatus {
     status: bool,
     client_id: String,
-    sample_imgs: Vec<String>,
 }
 
 // Checks if a file has an image extension.
@@ -241,7 +249,7 @@ async fn middleware(socket: &UdpSocket, socket6: &UdpSocket) -> io::Result<()> {
     send_image(&socket).await?;
 
     // Allows user to input image path (one-by-one)
-    
+
     println!("Waiting for encrypted image from server...");
     let mut encrypted_image_data = Vec::new();
     let mut buffer = [0u8; 2048];
@@ -331,60 +339,110 @@ async fn middleware(socket: &UdpSocket, socket6: &UdpSocket) -> io::Result<()> {
     Ok(())
 }
 
+fn handle_auth() -> io::Result<bool> {
+    // get UID from directory of service from server instead (just a placeholder)
+    let mut uid = "127.0.0.1_1".to_string();
+    let path = Path::new("uid.txt");
+
+    if path.exists() {
+        println!("File exists!");
+        let contents = read_to_string("uid.txt")?;
+        if contents == uid {
+            return Ok(true);
+        }
+    } else {
+        println!("File does not exist!");
+    }
+
+    println!("Register or login? (r/l):");
+    let mut choice = String::new();
+    io::stdin()
+        .read_line(&mut choice)
+        .expect("Failed to read input!");
+
+    match choice.trim().to_lowercase().as_str() {
+        "r" => {
+            let mut file = File::create("uid.txt")?;
+            file.write_all(uid.as_bytes())?;
+            println!("UID: {}", uid);
+            Ok(true)
+        }
+        "l" => {
+            println!("Enter your UID:");
+            io::stdin()
+                .read_line(&mut uid)
+                .expect("Failed to read UID!");
+            // if UID matches what is in the directory of service, set flag to true and enter the loop
+            // otherwise terminate!
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
+}
+
 #[tokio::main]
 async fn main() -> io::Result<()> {
     let mut count = 0;
+    let authenticated = handle_auth()?;
+    if authenticated {
+        println!("Authentication successful!");
+    } else {
+        println!("Authentication failed!");
+    }
+    
+    if authenticated {
+        loop {
+            // Check if the IP addresses and port numbers of the three servers are provided
+            // if args.len() != N+1 {
+            // eprintln!("Usage: {} <ClientIP:ClientPORT> <Server1_IP:Server1_PORT> <Server2_IP:Server2_PORT> <Server3_IP:Server3_PORT>", args[0]);
+            // return Ok(());
+            // }
+            // let addresses_ports = [
+            // // args[args.len() - 4].clone(),
+            // // args[args.len() - 3].clone(),
+            // args[args.len() - 2].clone(),
+            // args[args.len() - 1].clone(),
+            // ];
 
-    loop {
-        // Check if the IP addresses and port numbers of the three servers are provided
-        // if args.len() != N+1 {
-        // eprintln!("Usage: {} <ClientIP:ClientPORT> <Server1_IP:Server1_PORT> <Server2_IP:Server2_PORT> <Server3_IP:Server3_PORT>", args[0]);
-        // return Ok(());
-        // }
-        // let addresses_ports = [
-        // // args[args.len() - 4].clone(),
-        // // args[args.len() - 3].clone(),
-        // args[args.len() - 2].clone(),
-        // args[args.len() - 1].clone(),
-        // ];
+            // struct for directory of service filling
+            let info = OnlineStatus {
+                status: true,
+                client_id: "5".to_string(),
+            };
 
-        // struct for directory of service filling
-        let info = OnlineStatus {
-            status: true,
-            client_id: "5".to_string(),
-            sample_imgs: vec!["image1.png".to_string(), "image2.png".to_string()],
-        };
-        let info_bytes = serde_json::to_vec(&info).unwrap();
+            let info_bytes = serde_json::to_vec(&info).unwrap();
 
-        // multicast to all servers
-        let servers: Vec<SocketAddr> = vec![
-            "127.0.0.1:8083".parse().unwrap(),
-            "127.0.0.1:8084".parse().unwrap(),
-            "127.0.0.1:2010".parse().unwrap(),
-        ];
+            // multicast to all servers
+            let servers: Vec<SocketAddr> = vec![
+                "127.0.0.1:8083".parse().unwrap(),
+                "127.0.0.1:8084".parse().unwrap(),
+                "127.0.0.1:2010".parse().unwrap(),
+            ];
 
-        let clientaddress = "127.0.0.1:8080"; // my client server address
-        let socket = UdpSocket::bind(clientaddress).await?;
-        let socket6 = UdpSocket::bind("127.0.0.1:2005").await?; // socket for encrypted image recieving
+            let clientaddress = "127.0.0.1:8080"; // my client server address
+            let socket = UdpSocket::bind(clientaddress).await?;
+            let socket6 = UdpSocket::bind("127.0.0.1:2005").await?; // socket for encrypted image recieving
 
-        // sending the Client status & info to all servers
-        socket.send_to(&info_bytes, servers[0]).await?;
-        
-        let mut input = String::new();
-        println!("Do you want to start Sending Message? (y/n): ");
-        io::stdin()
-            .read_line(&mut input)
-            .expect("Failed to read input");
+            // sending the client status and info to a single server
+            socket.send_to(&info_bytes, servers[0]).await?;
 
-        // if yes, send ELECT message to all servers
-        if input.trim().eq_ignore_ascii_case("y") {
-            for addr in &servers {
-                socket.send_to(b"ELECT", addr).await?;
-                println!("message sent to {}", addr);
+            println!("Do you want to start sending images? (y/n):");
+
+            let mut input = String::new();
+            io::stdin()
+                .read_line(&mut input)
+                .expect("Failed to read input");
+
+            // if yes, send ELECT message to all servers
+            if input.trim().eq_ignore_ascii_case("y") {
+                for addr in &servers {
+                    socket.send_to(b"ELECT", addr).await?;
+                    println!("message sent to {}", addr);
+                }
             }
+            // Call the middleware function that handles everything
+            middleware(&socket, &socket6).await?;
         }
-        // Call the middleware function that handles everything
-        middleware(&socket, &socket6).await?;
     }
     Ok(())
 }
