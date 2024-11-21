@@ -18,7 +18,21 @@ use steganography::util::file_as_image_buffer;
 use steganography::util::save_image_buffer;
 use steganography::util::str_to_bytes;
 use tokio::net::UdpSocket;
+use tokio::signal;
 use tokio::time::{sleep, timeout, Duration};
+
+// struct for image stats
+struct ImageStats {
+    client_id: String, // Unique identifier
+    img_id: String,    // Image identifier
+    num_of_views: u8,  // Number of views (using unsigned 8-bit integer)
+}
+// struct for online status
+#[derive(Serialize, Deserialize)]
+struct OnlineStatus {
+    status: bool,
+    client_id: String,
+}
 
 async fn send_image(socket: &UdpSocket) -> io::Result<()> {
     // Prompt the user for the image path
@@ -160,20 +174,6 @@ async fn resend_last_batch(
     }
     Ok(())
 }
-
-// struct for image stats
-struct ImageStats {
-    client_id: String, // Unique identifier
-    img_id: String,    // Image identifier
-    num_of_views: u8,  // Number of views (using unsigned 8-bit integer)
-}
-// struct for online status
-#[derive(Serialize, Deserialize)]
-struct OnlineStatus {
-    status: bool,
-    client_id: String,
-}
-
 // Checks if a file has an image extension.
 fn is_image_file(file_name: &str) -> bool {
     let image_extensions = ["png", "jpg", "jpeg", "gif"];
@@ -410,7 +410,7 @@ async fn main() -> io::Result<()> {
                 client_id: "5".to_string(),
             };
 
-            let info_bytes = serde_json::to_vec(&info).unwrap();
+            let info_bytes_online = serde_json::to_vec(&info).unwrap();
 
             // multicast to all servers
             let servers: Vec<SocketAddr> = vec![
@@ -418,15 +418,25 @@ async fn main() -> io::Result<()> {
                 "127.0.0.1:8084".parse().unwrap(),
                 "127.0.0.1:2010".parse().unwrap(),
             ];
-
             let clientaddress = "127.0.0.1:8080"; // my client server address
             let socket = UdpSocket::bind(clientaddress).await?;
             let socket6 = UdpSocket::bind("127.0.0.1:2005").await?; // socket for encrypted image recieving
 
             // sending the client status and info to a single server
-            socket.send_to(&info_bytes, servers[0]).await?;
+            if count == 0 {
+                socket.send_to(&info_bytes_online, servers[0]).await?;
+                count += 1;
+            }
+            socket.send_to(&info_bytes_online, servers[0]).await?;
 
-            println!("Do you want to start sending images? (y/n):");
+            println!("
+        |---------------------------------------------------------------|
+        |    1) If you want to send an image, please enter (y) or (Y)   |
+        |                                                               |
+        |    2) If you want to exit,             please enter (E) or (e)|   
+        |---------------------------------------------------------------|
+ "
+        );
 
             let mut input = String::new();
             io::stdin()
@@ -434,11 +444,24 @@ async fn main() -> io::Result<()> {
                 .expect("Failed to read input");
 
             // if yes, send ELECT message to all servers
-            if input.trim().eq_ignore_ascii_case("y") {
+            if input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("Y") {
                 for addr in &servers {
                     socket.send_to(b"ELECT", addr).await?;
                     println!("message sent to {}", addr);
                 }
+            } else if input.trim().eq_ignore_ascii_case("e") || input.trim().eq_ignore_ascii_case("E") {
+                println!("Exiting...");
+
+                let info = OnlineStatus {
+                    status: false,
+                    client_id: "5".to_string(),
+                };
+                let info_bytes_offline= serde_json::to_vec(&info).unwrap();
+                socket.send_to(&info_bytes_offline, servers[0]).await?;
+                break;
+            } 
+            else {
+                println!("Invalid input. Please try again.");
             }
             // Call the middleware function that handles everything
             middleware(&socket, &socket6).await?;
