@@ -9,6 +9,8 @@ dependencies = [
  "csv",
  "image 0.24.9",
  "rand",
+ "serde",
+ "serde_json",
  "socket2 0.4.10",
  "steganography",
  "sysinfo",
@@ -709,6 +711,18 @@ dependencies = [
  "proc-macro2 1.0.88",
  "quote 1.0.37",
  "syn 2.0.79",
+]
+
+[[package]]
+name = "serde_json"
+version = "1.0.133"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7fceb2473b9166b2294ef05efcb65a3db80803f0b03ef86a5fc88a2b85ee377"
+dependencies = [
+ "itoa",
+ "memchr",
+ "ryu",
+ "serde",
 ]
 
 [[package]]

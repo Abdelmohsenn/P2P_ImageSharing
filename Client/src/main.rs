@@ -1,5 +1,7 @@
 use csv::Writer;
 use image::{DynamicImage, ImageFormat, RgbaImage};
+use rand::prelude::SliceRandom;
+use rand::thread_rng;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::fs;
@@ -20,7 +22,6 @@ use steganography::util::str_to_bytes;
 use tokio::net::UdpSocket;
 use tokio::signal;
 use tokio::time::{sleep, timeout, Duration};
-
 // struct for image stats
 struct ImageStats {
     client_id: String, // Unique identifier
@@ -30,6 +31,7 @@ struct ImageStats {
 // struct for online status
 #[derive(Serialize, Deserialize)]
 struct OnlineStatus {
+    ip : String,
     status: bool,
     client_id: String,
 }
@@ -208,7 +210,7 @@ fn get_image_paths(dir: &str) -> Result<Vec<String>, std::io::Error> {
 }
 
 // The middleware function containing the logic for the client such as communicating with the servers and sending messages to the servers
-async fn middleware(socket: &UdpSocket, socket6: &UdpSocket) -> io::Result<()> {
+async fn middleware(socket: &UdpSocket, socket6: &UdpSocket) -> io::Result<String> {
     let mut buffer = [0u8; 2048];
     let mut leader_address = String::new();
 
@@ -336,7 +338,7 @@ async fn middleware(socket: &UdpSocket, socket6: &UdpSocket) -> io::Result<()> {
     let output_path = "decrypted_image.png";
     std::fs::write(output_path, &decrypted_data)?;
     println!("Decrypted image saved successfully as PNG!");
-    Ok(())
+    Ok(leader_address)
 }
 
 fn handle_auth() -> io::Result<bool> {
@@ -384,59 +386,49 @@ fn handle_auth() -> io::Result<bool> {
 async fn main() -> io::Result<()> {
     let mut count = 0;
     let authenticated = handle_auth()?;
+    let mut leader_address = String::new();
+    let servers: Vec<SocketAddr> = vec![
+        "127.0.0.1:8083".parse().unwrap(),
+        "127.0.0.1:8084".parse().unwrap(),
+        "127.0.0.1:2010".parse().unwrap(),
+    ];
+    let mut rng = thread_rng();
+    let mut assistant: SocketAddr = *servers.choose(&mut rng).unwrap();
     if authenticated {
         println!("Authentication successful!");
     } else {
         println!("Authentication failed!");
     }
-    
+
     if authenticated {
         loop {
-            // Check if the IP addresses and port numbers of the three servers are provided
-            // if args.len() != N+1 {
-            // eprintln!("Usage: {} <ClientIP:ClientPORT> <Server1_IP:Server1_PORT> <Server2_IP:Server2_PORT> <Server3_IP:Server3_PORT>", args[0]);
-            // return Ok(());
-            // }
-            // let addresses_ports = [
-            // // args[args.len() - 4].clone(),
-            // // args[args.len() - 3].clone(),
-            // args[args.len() - 2].clone(),
-            // args[args.len() - 1].clone(),
-            // ];
-
-            // struct for directory of service filling
-            let info = OnlineStatus {
-                status: true,
-                client_id: "5".to_string(),
-            };
-
-            let info_bytes_online = serde_json::to_vec(&info).unwrap();
-
-            // multicast to all servers
-            let servers: Vec<SocketAddr> = vec![
-                "127.0.0.1:8083".parse().unwrap(),
-                "127.0.0.1:8084".parse().unwrap(),
-                "127.0.0.1:2010".parse().unwrap(),
-            ];
             let clientaddress = "127.0.0.1:8080"; // my client server address
             let socket = UdpSocket::bind(clientaddress).await?;
             let socket6 = UdpSocket::bind("127.0.0.1:2005").await?; // socket for encrypted image recieving
+            
+            let info = OnlineStatus {
+                ip: clientaddress.to_string(),
+                status: true,
+                client_id: "5".to_string(),
+            };
+            let serialized_info = serde_json::to_string(&info).unwrap();
+            let message_to_send = format!("STATUS:{}", serialized_info);
 
             // sending the client status and info to a single server
-            if count == 0 {
-                socket.send_to(&info_bytes_online, servers[0]).await?;
-                count += 1;
+            if count == 0{ 
+            socket.send_to(&message_to_send.as_bytes(), assistant).await?;
+            count=count+1;
             }
-            socket.send_to(&info_bytes_online, servers[0]).await?;
-
-            println!("
+            
+            println!(
+                "
         |---------------------------------------------------------------|
         |    1) If you want to send an image, please enter (y) or (Y)   |
         |                                                               |
         |    2) If you want to exit,             please enter (E) or (e)|   
         |---------------------------------------------------------------|
  "
-        );
+            );
 
             let mut input = String::new();
             io::stdin()
@@ -449,22 +441,26 @@ async fn main() -> io::Result<()> {
                     socket.send_to(b"ELECT", addr).await?;
                     println!("message sent to {}", addr);
                 }
-            } else if input.trim().eq_ignore_ascii_case("e") || input.trim().eq_ignore_ascii_case("E") {
+            } else if input.trim().eq_ignore_ascii_case("e")
+                || input.trim().eq_ignore_ascii_case("E")
+            {
                 println!("Exiting...");
 
                 let info = OnlineStatus {
+                    ip: clientaddress.to_string(),
                     status: false,
                     client_id: "5".to_string(),
                 };
-                let info_bytes_offline= serde_json::to_vec(&info).unwrap();
-                socket.send_to(&info_bytes_offline, servers[0]).await?;
+                let serialized_info = serde_json::to_string(&info).unwrap();
+                let message_to_send = format!("STATUS:{}", serialized_info);
+                socket.send_to(&message_to_send.as_bytes(), assistant).await?;
                 break;
-            } 
-            else {
+            } else {
                 println!("Invalid input. Please try again.");
             }
             // Call the middleware function that handles everything
-            middleware(&socket, &socket6).await?;
+            leader_address = middleware(&socket, &socket6).await?;
+            count += 1;
         }
     }
     Ok(())

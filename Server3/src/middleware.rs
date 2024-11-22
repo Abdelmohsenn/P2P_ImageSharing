@@ -1,3 +1,7 @@
+use csv::Writer;
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::fs::OpenOptions;
 use std::io::{Cursor, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -9,11 +13,15 @@ use tokio::io;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, timeout, Duration};
-use std::fs;
-use csv::Writer;
-use std::fs::{OpenOptions};
 
 use crate::bully_election::server_election;
+
+#[derive(Serialize, Deserialize, Debug)]
+struct OnlineStatus {
+    ip : String,
+    status: bool,
+    client_id: String,
+}
 
 pub async fn middleware() -> io::Result<()> {
     let my_address = "127.0.0.1:2012";
@@ -44,6 +52,7 @@ pub async fn middleware() -> io::Result<()> {
     let fail_flag_clone_for_failure = Arc::clone(&fail_flag);
 
     let socket_clone = Arc::clone(&socket_client);
+    let socket_clone = Arc::clone(&socket_client);
     tokio::spawn(async move {
         loop {
             let mut buffer = [0u8; 2048];
@@ -55,6 +64,7 @@ pub async fn middleware() -> io::Result<()> {
                 .unwrap();
             let message = String::from_utf8_lossy(&buffer[..size]);
             let fail_flag_value = *fail_flag_clone.lock().unwrap();
+        
             if message == "ELECT" && !fail_flag_value {
                 println!(
                     "Election request received from {}. Initiating election...",
@@ -81,10 +91,118 @@ pub async fn middleware() -> io::Result<()> {
                     }
                     Err(e) => eprintln!("Election failed: {:?}", e),
                 }
+            } else if message.starts_with("DIR_OF_SERV") {
+                // Extract the JSON payload from the message
+                if let Some(json_payload) = message.strip_prefix("DIR_OF_SERV:") {
+                    match serde_json::from_str::<OnlineStatus>(json_payload) {
+                        Ok(online_status) => {
+                            println!("{:?}", online_status);
+    
+                            // Process the struct (e.g., write to CSV)
+                            let record = format!(
+                                "{},{},{}\n",
+                                online_status.ip,
+                                online_status.client_id,
+                                online_status.status
+                            );
+    
+                            let file_exists = Path::new("directory_of_service.csv").exists();
+                            let mut wtr = match OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open("directory_of_service.csv")
+                            {
+                                Ok(file) => file,
+                                Err(e) => {
+                                    eprintln!("Failed to open file: {}", e);
+                                    return;
+                                }
+                            };
+    
+                            if !file_exists {
+                                if let Err(e) = wtr.write_all(b"uid,client_id,status\n") {
+                                    eprintln!("Failed to write header to file: {}", e);
+                                    return;
+                                }
+                            }
+    
+                            if let Err(e) = wtr.write_all(record.as_bytes()) {
+                                eprintln!("Failed to write record to file: {}", e);
+                            }
+                        }
+                        Err(e) => eprintln!("Failed to parse OnlineStatus: {}", e),
+                    }
+                } else {
+                    eprintln!("Malformed DIR_OF_SERV message: {}", message);
+                }
+             } else if message.starts_with("STATUS:") {
+                // Extract the JSON payload
+                if let Some(json_payload) = message.strip_prefix("STATUS:") {
+                    // Attempt to deserialize the JSON into OnlineStatus
+                    match serde_json::from_str::<OnlineStatus>(json_payload) {
+                        Ok(online_status) => {
+                            println!("Received OnlineStatus: {:?}", online_status);
+            
+                            let serialized_status = match serde_json::to_string(&online_status) {
+                                Ok(data) => data,
+                                Err(e) => {
+                                    eprintln!("Failed to serialize OnlineStatus: {}", e);
+                                    return;
+                                }
+                            };
+            
+                            // Forward the STATUS message to other peers
+                            for peer in &peers {
+                                let message_to_send = format!("DIR_OF_SERV:{}", serialized_status);
+                                socket_election
+                                    .lock()
+                                    .await
+                                    .send_to(message_to_send.as_bytes(), peer)
+                                    .await
+                                    .unwrap();
+                            }
+            
+                            // Write the information to the CSV file
+                            let record = format!(
+                                "{},{},{}\n",
+                                online_status.ip,
+                                online_status.client_id,
+                                online_status.status
+                            );
+            
+                            let file_exists = Path::new("directory_of_service.csv").exists();
+                            let mut wtr = match OpenOptions::new()
+                                .create(true)
+                                .append(true)
+                                .open("directory_of_service.csv")
+                            {
+                                Ok(file) => file,
+                                Err(e) => {
+                                    eprintln!("Failed to open file: {}", e);
+                                    return;
+                                }
+                            };
+            
+                            if !file_exists {
+                                if let Err(e) = wtr.write_all(b"uid,client_id,status\n") {
+                                    eprintln!("Failed to write header to file: {}", e);
+                                    return;
+                                }
+                            }
+            
+                            if let Err(e) = wtr.write_all(record.as_bytes()) {
+                                eprintln!("Failed to write record to file: {}", e);
+                            }
+                        }
+                        Err(e) => eprintln!("Failed to parse OnlineStatus: {}", e),
+                    }
+                } else {
+                    eprintln!("Malformed STATUS message: {}", message);
+                }
             }
+                      
         }
     });
-
     let failure_socket_clone = Arc::clone(&failure_socket);
     tokio::spawn(async move {
         let mut buffer = [0u8; 2048];
@@ -186,6 +304,7 @@ pub async fn middleware() -> io::Result<()> {
                     .await
                     .unwrap();
                 println!("NACK sent for sequence number {}", expected_sequence_num);
+
                 continue;
             }
 
@@ -199,7 +318,7 @@ pub async fn middleware() -> io::Result<()> {
                     )
                     .await
                     .unwrap();
-                println!("ACK sent for sequence number {}", expected_sequence_num - 1);
+                println!("ACK {} sent.", expected_sequence_num - 1);
             }
         }
     });
@@ -223,7 +342,7 @@ pub async fn middleware() -> io::Result<()> {
             let duration = start.elapsed();
             println!("Encryption Time: {:?}", duration);
 
-            let filename = "server3_encryption_times.csv";
+            let filename = "server2_encryption_times.csv";
             let file_exists = std::path::Path::new(filename).exists();
             match OpenOptions::new().append(true).create(true).open(filename) {
                 Ok(mut file) => {
@@ -359,6 +478,6 @@ pub async fn middleware() -> io::Result<()> {
     });
 
     loop {
-        sleep(Duration::from_secs(1)).await;
+        sleep(Duration::from_secs(10)).await;
     }
 }
