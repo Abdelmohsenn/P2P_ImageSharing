@@ -142,7 +142,11 @@ pub async fn middleware() -> io::Result<()> {
                     match serde_json::from_str::<OnlineStatus>(json_payload) {
                         Ok(online_status) => {
                             println!("Received OnlineStatus: {:?}", online_status);
-            
+                            
+                        // send ack that i receive the status
+                        let message_to_client = format!("STATUS_ACK:{}", my_address);
+                        socket_election.lock().await.send_to(message_to_client.as_bytes(), addr).await.unwrap();
+                        println!("Ack sent to {}", addr);
                             let serialized_status = match serde_json::to_string(&online_status) {
                                 Ok(data) => data,
                                 Err(e) => {
@@ -199,6 +203,18 @@ pub async fn middleware() -> io::Result<()> {
                 } else {
                     eprintln!("Malformed STATUS message: {}", message);
                 }
+            } else if message.starts_with("Request_DOS") {
+             println!("Received DOS message from {}", addr);
+               // parse the directory of service.csv file and send the info to the client
+                let file = fs::read_to_string("directory_of_service.csv").expect("Unable to read file");
+                let message_to_send = format!("DOS:{}", file);
+                let message = message_to_send.as_bytes();
+                socket_election
+                .lock()
+                .await
+                .send_to(message, addr)
+                .await
+                .unwrap();
             }
                       
         }

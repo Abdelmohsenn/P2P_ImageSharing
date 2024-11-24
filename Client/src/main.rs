@@ -22,6 +22,9 @@ use steganography::util::str_to_bytes;
 use tokio::net::UdpSocket;
 use tokio::signal;
 use tokio::time::{sleep, timeout, Duration};
+use tokio::time;
+
+
 // struct for image stats
 struct ImageStats {
     client_id: String, // Unique identifier
@@ -412,22 +415,49 @@ async fn main() -> io::Result<()> {
                 client_id: "5".to_string(),
             };
             let serialized_info = serde_json::to_string(&info).unwrap();
+            // state a timeout for the client to send the status and receive STATUS_ACK, if not received send again after timeout
+            let timeout = Duration::from_secs(1);
+            let mut start_time = Instant::now();
+            let mut received_acks = false;
             let message_to_send = format!("STATUS:{}", serialized_info);
-
-            // sending the client status and info to a single server
-            if count == 0{ 
-            socket.send_to(&message_to_send.as_bytes(), assistant).await?;
-            count=count+1;
+            if count == 0 {
+                socket.send_to(message_to_send.as_bytes(), assistant).await?;
+                count += 1;
             }
-            
+    
+            let mut received_acks = false;
+            while !received_acks {
+                // Timeout logic
+                let timeout_duration = Duration::from_secs(1);
+                let mut buf = [0; 1024];
+    
+                match time::timeout(timeout_duration, socket.recv_from(&mut buf)).await {
+                    Ok(Ok((size, _))) => {
+                        let received_message = String::from_utf8_lossy(&buf[..size]);
+                        if received_message.contains("STATUS_ACK") {
+                            println!("Received STATUS_ACK from server");
+                            received_acks = true;
+                        }
+                    }
+                    _ => {
+                        // Timeout occurred
+                        assistant = *servers.choose(&mut rng).unwrap(); // Randomize IP
+                        println!("Timeout occurred, resending STATUS message to {}", assistant);
+                        socket.send_to(message_to_send.as_bytes(), assistant).await?;
+                    }
+                }
+            }
+            // sending the client status and info to a single server
+         
+
             println!(
+    
                 "
-        |---------------------------------------------------------------|
-        |    1) If you want to send an image, please enter (y) or (Y)   |
-        |                                                               |
-        |    2) If you want to exit,             please enter (E) or (e)|   
-        |---------------------------------------------------------------|
- "
+    |---------------------------------------------------------------|
+    |    1) If you want to send an image, please enter (Y) or (y)   |
+    |    2) If you want to exit,             please enter (E) or (e)|   
+    |    3) If you want to get the DoS,      please enter (D) or (d)|    
+    |---------------------------------------------------------------| "
             );
 
             let mut input = String::new();
@@ -440,6 +470,7 @@ async fn main() -> io::Result<()> {
                 for addr in &servers {
                     socket.send_to(b"ELECT", addr).await?;
                     println!("message sent to {}", addr);
+                    middleware(&socket, &socket6).await?;
                 }
             } else if input.trim().eq_ignore_ascii_case("e")
                 || input.trim().eq_ignore_ascii_case("E")
@@ -455,12 +486,21 @@ async fn main() -> io::Result<()> {
                 let message_to_send = format!("STATUS:{}", serialized_info);
                 socket.send_to(&message_to_send.as_bytes(), assistant).await?;
                 break;
-            } else {
+            } else if input.trim().eq_ignore_ascii_case("d") || input.trim().eq_ignore_ascii_case("D") {
+                let message = "Request_DOS";
+                socket.send_to(message.as_bytes(), assistant).await?;
+                println!("Requested DOS!");
+                // wait for the directory of service received from the server
+                let mut buffer = [0; 1024];
+                let (amt, _) = socket.recv_from(&mut buffer).await?;
+                let received_message = String::from_utf8_lossy(&buffer[..amt]);
+                println!("Received message: {}", received_message);
+            }
+            
+            else {
                 println!("Invalid input. Please try again.");
             }
             // Call the middleware function that handles everything
-            leader_address = middleware(&socket, &socket6).await?;
-            count += 1;
         }
     }
     Ok(())
