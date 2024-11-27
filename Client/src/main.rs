@@ -23,7 +23,14 @@ use tokio::net::UdpSocket;
 use tokio::signal;
 use tokio::time::{sleep, timeout, Duration};
 use tokio::time;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
+mod communication;
+use communication::send_image;
+use communication::send_samples;
+use communication::request_image_by_id;
+use communication::start_p2p_listener;
 
 // struct for image stats
 struct ImageStats {
@@ -39,177 +46,23 @@ struct OnlineStatus {
     client_id: String,
 }
 
-async fn send_image(socket: &UdpSocket) -> io::Result<()> {
-    // Prompt the user for the image path
-    let mut input = String::new();
-    println!("Enter your Image Path to send to the server: ");
-    io::stdin()
-        .read_line(&mut input)
-        .expect("Failed to read line");
-    let image_path = input.trim(); // Trim to remove any extraneous whitespace or newlines
+async fn parse_and_store_dos(dos_content: &str) -> HashMap<String, String> {
+    let mut client_map = HashMap::new();
 
-    // Load the image from the given path
-    let format =
-        image::guess_format(&std::fs::read(image_path).expect("Failed to read the image file"))
-            .unwrap_or(ImageFormat::Jpeg);
-    let img = image::open(image_path).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-    let mut buf = Cursor::new(Vec::new());
-    img.write_to(&mut buf, format)
-        .expect("Failed to convert image to bytes");
-    let image_bytes = buf.into_inner();
-
-    // Image chunking setup
-    let chunk_size = 2044;
-    let total_chunks = (image_bytes.len() as f64 / chunk_size as f64).ceil() as usize;
-
-    let mut ack_buffer = [0u8; 1024];
-    let max_retries = 5;
-    let mut sequence_num: u32 = 0;
-
-    // Send image in chunks
-    for i in 0..total_chunks {
-        let start = i * chunk_size;
-        let end = std::cmp::min(start + chunk_size, image_bytes.len());
-        let chunk_data = &image_bytes[start..end];
-
-        // Prepare chunk with sequence number
-        let mut chunk = Vec::with_capacity(4 + chunk_data.len());
-        chunk.extend_from_slice(&sequence_num.to_be_bytes());
-        chunk.extend_from_slice(chunk_data);
-
-        socket.send(&chunk).await?;
-        println!(
-            "Sent chunk {} of {} with sequence number {}",
-            i + 1,
-            total_chunks,
-            sequence_num
-        );
-
-        if i == total_chunks - 1 {
-            // Send "END" message
-            let mut end_message = Vec::with_capacity(4 + 3);
-            println!(
-                "Sending END message... with sequence number {}",
-                sequence_num
-            );
-            end_message.extend_from_slice(&(sequence_num + 1).to_be_bytes());
-            end_message.extend_from_slice(b"END");
-            socket.send(&end_message).await?;
-
-            // Wait for ACK END
-            match timeout(Duration::from_secs(5), socket.recv(&mut ack_buffer)).await {
-                Ok(Ok(ack_size)) => {
-                    let ack_message = String::from_utf8_lossy(&ack_buffer[..ack_size]);
-                    if ack_message == "END" {
-                        println!("Final ACK received. Image transmission completed.");
-                        break;
-                    }
-                }
-                Ok(Err(e)) => println!("Failed to receive final ACK: {}", e),
-                Err(_) => println!("Timeout waiting for final ACK."),
-            }
-            break;
-        }
-
-        sequence_num += 1;
-
-        // Check for ACK or NACK every 10 chunks or at the end of transmission
-        if (i + 1) % 10 == 0 || i == total_chunks - 1 {
-            let mut retries = 0;
-            loop {
-                match timeout(Duration::from_secs(5), socket.recv(&mut ack_buffer)).await {
-                    Ok(Ok(ack_size)) => {
-                        let ack_message = String::from_utf8_lossy(&ack_buffer[..ack_size]);
-                        if ack_message.starts_with("ACK") {
-                            let ack_num: u32 = ack_message[4..].parse().unwrap();
-                            println!("ACK received for sequence number {}.", ack_num);
-                            if ack_num == sequence_num - 1 {
-                                break; // Successfully received ACK for this chunk
-                            }
-                        } else if ack_message.starts_with("NACK") {
-                            println!("NACK received. Resending last batch...");
-                            retries += 1;
-                            if retries >= max_retries {
-                                println!("Max retries reached for last batch. Aborting.");
-                                break;
-                            }
-                            resend_last_batch(i, chunk_size, &image_bytes, socket).await?;
-                        }
-                    }
-                    Ok(Err(e)) => {
-                        println!("Failed to receive ACK: {}", e);
-                        break;
-                    }
-                    Err(_) => {
-                        println!("Timeout waiting for ACK. Retrying last batch.");
-                        retries += 1;
-                        if retries >= max_retries {
-                            println!("Max retries reached for timeout on batch. Aborting.");
-                            break;
-                        }
-                        resend_last_batch(i, chunk_size, &image_bytes, socket).await?;
-                    }
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-// Helper function to resend the last 10 chunks or fewer if near the start
-async fn resend_last_batch(
-    current_index: usize,
-    chunk_size: usize,
-    image_bytes: &[u8],
-    socket: &UdpSocket,
-) -> io::Result<()> {
-    let start_chunk = (current_index + 1 - 10).max(0);
-    for j in start_chunk..=current_index {
-        let start = j * chunk_size;
-        let end = std::cmp::min(start + chunk_size, image_bytes.len());
-        let chunk_data = &image_bytes[start..end];
-
-        let mut chunk = Vec::with_capacity(4 + chunk_data.len());
-        chunk.extend_from_slice(&(j as u32).to_be_bytes());
-        chunk.extend_from_slice(chunk_data);
-
-        socket.send(&chunk).await?;
-        println!("Resent chunk {} with sequence number {}", j + 1, j);
-        sleep(Duration::from_millis(5)).await;
-    }
-    Ok(())
-}
-// Checks if a file has an image extension.
-fn is_image_file(file_name: &str) -> bool {
-    let image_extensions = ["png", "jpg", "jpeg", "gif"];
-    if let Some(extension) = Path::new(file_name).extension() {
-        return image_extensions
-            .iter()
-            .any(|&ext| ext.eq_ignore_ascii_case(extension.to_str().unwrap_or("")));
-    }
-    false
-}
-
-/// Retrieves all image file paths in a directory.
-fn get_image_paths(dir: &str) -> Result<Vec<String>, std::io::Error> {
-    let mut image_paths = Vec::new();
-
-    // Read the directory
-    for entry in fs::read_dir(dir)? {
-        let entry = entry?;
-        let path = entry.path();
-
-        // If the entry is a file and has an image extension, add to the list
-        if path.is_file() {
-            if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
-                if is_image_file(file_name) {
-                    image_paths.push(path.to_string_lossy().to_string());
-                }
+    for line in dos_content.lines().skip(1) { // Skip the header
+        let parts: Vec<&str> = line.split(',').collect();
+        if parts.len() == 3 {
+            let ip_port = parts[0].trim().to_string();
+            let client_id = parts[1].trim().to_string();
+            let status = parts[2].trim();
+            if status == "true" {
+                client_map.insert(client_id, ip_port);
             }
         }
     }
 
-    Ok(image_paths)
+    println!("Parsed DoS: {:?}", client_map);
+    client_map
 }
 
 // The middleware function containing the logic for the client such as communicating with the servers and sending messages to the servers
@@ -238,6 +91,7 @@ async fn middleware(socket: &UdpSocket, socket6: &UdpSocket) -> io::Result<Strin
                     break;
                 } else {
                     println!("Received message without Leader_Ack, retrying...");
+                    println!("Received: {}", message);
                 }
             }
             Ok(Err(e)) => {
@@ -250,7 +104,6 @@ async fn middleware(socket: &UdpSocket, socket6: &UdpSocket) -> io::Result<Strin
         }
     }
 
-    let image_path = "/Users/ramygad/Desktop/11_19 dist/P2P_ImageSharing/P2P_ImageSharing/Server/images/mask.jpg";
     send_image(&socket).await?;
 
     // Allows user to input image path (one-by-one)
@@ -303,6 +156,7 @@ async fn middleware(socket: &UdpSocket, socket6: &UdpSocket) -> io::Result<Strin
         img_id: String::from("596132"),
         num_of_views: 10,
     };
+
     // Define a secret message to hide in our picture
     let views = stats.num_of_views.to_string();
     println!("Encoding message: {}", views);
@@ -395,22 +249,31 @@ async fn main() -> io::Result<()> {
         "127.0.0.1:8084".parse().unwrap(),
         "127.0.0.1:2010".parse().unwrap(),
     ];
+    println!("before");
     let mut rng = thread_rng();
     let mut assistant: SocketAddr = *servers.choose(&mut rng).unwrap();
+    println!("After");
+
     if authenticated {
         println!("Authentication successful!");
     } else {
         println!("Authentication failed!");
     }
 
+    let client_map = Arc::new(Mutex::new(HashMap::new()));
+
     if authenticated {
+        let p2p_listener = "127.0.0.1:8079";
+        let mut samples_sent = false; 
         loop {
+            println!("idk");
+            // start_p2p_listener(&p2p_listener,"samples").await?;
             let clientaddress = "127.0.0.1:8080"; // my client server address
             let socket = UdpSocket::bind(clientaddress).await?;
             let socket6 = UdpSocket::bind("127.0.0.1:2005").await?; // socket for encrypted image recieving
             
             let info = OnlineStatus {
-                ip: clientaddress.to_string(),
+                ip: p2p_listener.to_string(),
                 status: true,
                 client_id: "5".to_string(),
             };
@@ -422,21 +285,25 @@ async fn main() -> io::Result<()> {
             let message_to_send = format!("STATUS:{}", serialized_info);
             if count == 0 {
                 socket.send_to(message_to_send.as_bytes(), assistant).await?;
-                count += 1;
-            }
-    
-            let mut received_acks = false;
+         
+                let mut received_acks = false;
+
             while !received_acks {
-                // Timeout logic
                 let timeout_duration = Duration::from_secs(1);
                 let mut buf = [0; 1024];
-    
+
                 match time::timeout(timeout_duration, socket.recv_from(&mut buf)).await {
                     Ok(Ok((size, _))) => {
                         let received_message = String::from_utf8_lossy(&buf[..size]);
                         if received_message.contains("STATUS_ACK") {
                             println!("Received STATUS_ACK from server");
                             received_acks = true;
+
+                            // Send samples only if they haven't been sent already
+                            if !samples_sent {
+                                send_samples(&socket, &info.client_id, &assistant.to_string()).await?;
+                                samples_sent = true; // Mark samples as sent
+                            }
                         }
                     }
                     _ => {
@@ -447,9 +314,9 @@ async fn main() -> io::Result<()> {
                     }
                 }
             }
+            count += 1;
+        }
             // sending the client status and info to a single server
-         
-
             println!(
     
                 "
@@ -470,15 +337,13 @@ async fn main() -> io::Result<()> {
                 for addr in &servers {
                     socket.send_to(b"ELECT", addr).await?;
                     println!("message sent to {}", addr);
-                    middleware(&socket, &socket6).await?;
                 }
-            } else if input.trim().eq_ignore_ascii_case("e")
-                || input.trim().eq_ignore_ascii_case("E")
-            {
+                middleware(&socket, &socket6).await?;
+            } else if input.trim().eq_ignore_ascii_case("e") || input.trim().eq_ignore_ascii_case("E"){
                 println!("Exiting...");
 
                 let info = OnlineStatus {
-                    ip: clientaddress.to_string(),
+                    ip: p2p_listener.to_string(),
                     status: false,
                     client_id: "5".to_string(),
                 };
@@ -486,21 +351,85 @@ async fn main() -> io::Result<()> {
                 let message_to_send = format!("STATUS:{}", serialized_info);
                 socket.send_to(&message_to_send.as_bytes(), assistant).await?;
                 break;
-            } else if input.trim().eq_ignore_ascii_case("d") || input.trim().eq_ignore_ascii_case("D") {
+            } 
+            else if input.trim().eq_ignore_ascii_case("d") || input.trim().eq_ignore_ascii_case("D") {
+                // Request DoS and samples
                 let message = "Request_DOS";
                 socket.send_to(message.as_bytes(), assistant).await?;
                 println!("Requested DOS!");
-                // wait for the directory of service received from the server
-                let mut buffer = [0; 1024];
-                let (amt, _) = socket.recv_from(&mut buffer).await?;
-                let received_message = String::from_utf8_lossy(&buffer[..amt]);
-                println!("Received message: {}", received_message);
-            }
+                
+                // Wait to receive the DoS and samples
+                let mut buffer = [0u8; 4096];
+                let received_samples_dir = "received_samples";
+                std::fs::create_dir_all(received_samples_dir).expect("Failed to create 'received_samples' directory");
             
-            else {
+                let mut dos_content = String::new(); // Collect the DoS content
+                let mut samples_received = false; // Track if samples were received
+            
+                loop {
+                    let (amt, _) = socket.recv_from(&mut buffer).await?;
+                    let received_message = String::from_utf8_lossy(&buffer[..amt]).to_string();
+            
+                    if received_message == "ACK" {
+                        // Ignore ACK messages
+                        println!("Received ACK, ignoring...");
+                        continue;
+                    } else if received_message.starts_with("DOS:") {
+                        // Process the directory of service
+                        dos_content = received_message.strip_prefix("DOS:").unwrap_or("").to_string();
+                        println!("Received DoS: {}", dos_content);
+            
+                        // Parse and store DoS data
+                        let mut client_map_locked = client_map.lock().unwrap();
+                        *client_map_locked = parse_and_store_dos(&dos_content).await;
+                    } else if received_message.starts_with("SAMPLE:") {
+                        samples_received = true;
+            
+                        // Process sample metadata
+                        let parts: Vec<&str> = received_message.strip_prefix("SAMPLE:").unwrap_or("").split(':').collect();
+                        if parts.len() == 2 {
+                            let client_id = parts[0];
+                            let sample_name = parts[1];
+                            println!("Receiving sample {} from client {}", sample_name, client_id);
+            
+                            // Receive the sample data
+                            let (data_size, _) = socket.recv_from(&mut buffer).await?;
+                            let sample_path = format!("{}/{}/{}", received_samples_dir, client_id, sample_name);
+            
+                            // Ensure client-specific directory exists
+                            let client_samples_dir = format!("{}/{}", received_samples_dir, client_id);
+                            std::fs::create_dir_all(&client_samples_dir).expect("Failed to create client-specific received_samples directory");
+            
+                            // Save the received sample
+                            std::fs::write(&sample_path, &buffer[..data_size]).expect("Failed to write received sample");
+                            println!("Saved received sample: {}", sample_path);
+                        }
+                    } else if received_message == "NO_SAMPLES" {
+                        println!("No samples available on the server.");
+                        break;
+                    } else if received_message == "SAMPLES_DONE" {
+                        println!("All samples have been received.");
+                        break;
+                    } else {
+                        println!("Unknown message: {}", received_message);
+                    }
+                }
+            
+                // If no samples were received, inform the user
+                if !samples_received {
+                    println!("No samples were transmitted during the DoS request.");
+                }
+            } else if input.trim().eq_ignore_ascii_case("r") {
+                // Request image by ID
+                println!("Enter image ID to request (e.g., 5_0): ");
+                let mut image_id = String::new();
+                io::stdin().read_line(&mut image_id).expect("Failed to read image ID");
+
+                let client_map_locked = client_map.lock().unwrap();
+                request_image_by_id(&socket, image_id.trim(), &*client_map_locked).await?;
+            } else {
                 println!("Invalid input. Please try again.");
             }
-            // Call the middleware function that handles everything
         }
     }
     Ok(())

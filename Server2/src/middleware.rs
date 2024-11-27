@@ -1,27 +1,149 @@
+use crate::bully_election::server_election;
 use csv::Writer;
+use csv::WriterBuilder;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{Cursor, Write};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Instant;
 use steganography::encoder::*;
 use steganography::util::file_as_dynamic_image;
+use tokio::fs::File;
+use std::net::SocketAddr;
 use tokio::io;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, timeout, Duration};
-
-use crate::bully_election::server_election;
-
 #[derive(Serialize, Deserialize, Debug)]
 struct OnlineStatus {
     ip : String,
     status: bool,
     client_id: String,
 }
+
+pub async fn receive_samples(
+    socket: &Arc<tokio::sync::Mutex<UdpSocket>>,
+    client_id: &str,
+    client_address: &SocketAddr,
+    peers: &[String], // List of peer addresses
+) -> io::Result<()> {
+    println!("Waiting for samples from client: {}", client_id);
+
+    let samples_dir = format!("samples/{}", client_id);
+    std::fs::create_dir_all(&samples_dir).expect("Failed to create client-specific 'samples/' directory");
+
+    let mut buffer = [0u8; 4096]; // Buffer for receiving data
+    let timeout_duration = Duration::from_secs(30); // Timeout duration
+    let mut received_files = Vec::new(); // Track received files for syncing
+
+    loop {
+        let recv_result = timeout(timeout_duration, socket.lock().await.recv_from(&mut buffer)).await;
+
+        match recv_result {
+            Ok(Ok((size, addr))) => {
+                if addr != *client_address {
+                    println!("Unexpected message from {}, ignoring.", addr);
+                    continue;
+                }
+
+                if size == 0 {
+                    continue;
+                }
+
+                let message = String::from_utf8_lossy(&buffer[..size]);
+
+                if message.starts_with("SAMPLE_UPLOAD:") {
+                    // Parse metadata
+                    let parts: Vec<&str> = message.split(':').collect();
+                    if parts.len() < 3 {
+                        eprintln!("Invalid SAMPLE_UPLOAD message: {}", message);
+                        continue;
+                    }
+                    let image_id = parts[2]; // Use the provided image ID
+
+                    // Await the image data
+                    let mut buffer = [0u8; 4096];
+                    let recv_image_result = timeout(timeout_duration, socket.lock().await.recv_from(&mut buffer)).await;
+
+                    match recv_image_result {
+                        Ok(Ok((image_size, image_addr))) => {
+                            if image_addr != *client_address {
+                                println!("Unexpected image data from {}, ignoring.", image_addr);
+                                continue;
+                            }
+
+                            // Save the image
+                            let image_path = format!("{}/{}.jpg", samples_dir, image_id); // Use image_id without extension
+                            std::fs::write(&image_path, &buffer[..image_size])?;
+                            println!("Saved sample image: {}", image_path);
+
+                            received_files.push((image_id.to_string(), buffer[..image_size].to_vec()));
+
+                            // Send acknowledgment
+                            // socket.lock().await.send_to(b"ACK", client_address).await?;
+                            println!("ACK sent for sample: {}", image_id);
+                        }
+                        Ok(Err(e)) => {
+                            eprintln!("Failed to receive image data: {:?}", e);
+                            continue;
+                        }
+                        Err(_) => {
+                            eprintln!("Timeout while waiting for image data from client: {}", client_id);
+                            break;
+                        }
+                    }
+                } else if message == "END_SAMPLES" {
+                    println!("All samples received from client: {}", client_id);
+
+                    // Distribute samples to peers
+                    distribute_samples_to_peers(socket, peers, client_id, &received_files).await?;
+                    break;
+                } else {
+                    println!("Unknown message: {}", message);
+                }
+            }
+            Ok(Err(e)) => {
+                eprintln!("Failed to receive data: {:?}", e);
+                continue;
+            }
+            Err(_) => {
+                eprintln!("Timeout while waiting for samples from client: {}", client_id);
+                break;
+            }
+        }
+    }
+
+    println!("Stopped waiting for samples from client: {}", client_id);
+    Ok(())
+}
+
+
+// Function to distribute samples to peers
+async fn distribute_samples_to_peers(
+    socket: &Arc<tokio::sync::Mutex<UdpSocket>>,
+    peers: &[String],
+    client_id: &str,
+    received_files: &[(String, Vec<u8>)], // File names (image_id) and their data
+) -> io::Result<()> {
+    for (image_id, image_data) in received_files {
+        for peer in peers {
+            let metadata_message = format!("SAMPLE_SYNC:{}:{}", client_id, image_id);
+            socket.lock().await.send_to(metadata_message.as_bytes(), peer).await?;
+            println!("Sent SAMPLE_SYNC metadata to {}", peer);
+
+            socket.lock().await.send_to(image_data, peer).await?;
+            println!("Sent file {} to {}", image_id, peer);
+        }
+    }
+
+    Ok(())
+}
+
 
 pub async fn middleware() -> io::Result<()> {
     let my_address = "127.0.0.1:8081";
@@ -50,6 +172,7 @@ pub async fn middleware() -> io::Result<()> {
 
     let socket_clone = Arc::clone(&socket_client);
     let socket_clone = Arc::clone(&socket_client);
+    
     tokio::spawn(async move {
         loop {
             let mut buffer = [0u8; 2048];
@@ -93,126 +216,364 @@ pub async fn middleware() -> io::Result<()> {
                 if let Some(json_payload) = message.strip_prefix("DIR_OF_SERV:") {
                     match serde_json::from_str::<OnlineStatus>(json_payload) {
                         Ok(online_status) => {
-                            println!("{:?}", online_status);
-    
-                            // Process the struct (e.g., write to CSV)
-                            let record = format!(
-                                "{},{},{}\n",
-                                online_status.ip,
-                                online_status.client_id,
-                                online_status.status
-                            );
-    
-                            let file_exists = Path::new("directory_of_service.csv").exists();
-                            let mut wtr = match OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open("directory_of_service.csv")
-                            {
-                                Ok(file) => file,
-                                Err(e) => {
-                                    eprintln!("Failed to open file: {}", e);
-                                    return;
-                                }
-                            };
-    
-                            if !file_exists {
-                                if let Err(e) = wtr.write_all(b"uid,client_id,status\n") {
-                                    eprintln!("Failed to write header to file: {}", e);
-                                    return;
+                            println!("Received OnlineStatus from peer: {:?}", online_status);
+            
+                            let file_path = "directory_of_service.csv";
+                            let mut is_duplicate = false;
+                            let mut needs_update = false;
+                            let mut updated_records = Vec::new();
+            
+                            // Check if the file exists and process existing records
+                            if Path::new(file_path).exists() {
+                                if let Ok(content) = fs::read_to_string(file_path) {
+                                    for line in content.lines() {
+                                        // Skip the header
+                                        if line.starts_with("uid,client_id,status") {
+                                            updated_records.push(line.to_string());
+                                            continue;
+                                        }
+            
+                                        let mut fields: Vec<&str> = line.split(',').collect();
+                                        if fields.len() == 3 {
+                                            if fields[0] == online_status.ip {
+                                                is_duplicate = true;
+            
+                                                // Check if the status has changed
+                                                let existing_status = fields[2] == "true";
+                                                if existing_status != online_status.status {
+                                                    fields[2] = if online_status.status {
+                                                        "true"
+                                                    } else {
+                                                        "false"
+                                                    };
+                                                    needs_update = true;
+                                                    println!(
+                                                        "Updating record for UID/IP: {} from {} to {}",
+                                                        online_status.ip,
+                                                        existing_status,
+                                                        online_status.status
+                                                    );
+                                                }
+                                            }
+                                        }
+            
+                                        // Add either the updated or original record to the list
+                                        updated_records.push(fields.join(","));
+                                    }
                                 }
                             }
-    
-                            if let Err(e) = wtr.write_all(record.as_bytes()) {
-                                eprintln!("Failed to write record to file: {}", e);
+            
+                            // Write updated data back to the CSV if needed
+                            if is_duplicate && needs_update {
+                                let mut file = match OpenOptions::new()
+                                    .write(true)
+                                    .truncate(true)
+                                    .open(file_path)
+                                {
+                                    Ok(file) => file,
+                                    Err(e) => {
+                                        eprintln!("Failed to open file for updating: {}", e);
+                                        return;
+                                    }
+                                };
+            
+                                for record in &updated_records {
+                                    if let Err(e) = writeln!(file, "{}", record) {
+                                        eprintln!("Failed to write record: {}", e);
+                                    }
+                                }
+                                println!("CSV file updated successfully.");
+                            } else if !is_duplicate {
+                                // Append the new record if it's not a duplicate
+                                let record = format!(
+                                    "{},{},{}\n",
+                                    online_status.ip,
+                                    online_status.client_id,
+                                    online_status.status
+                                );
+            
+                                let file_exists = Path::new(file_path).exists();
+                                let mut wtr = match OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open(file_path)
+                                {
+                                    Ok(file) => file,
+                                    Err(e) => {
+                                        eprintln!("Failed to open file: {}", e);
+                                        return;
+                                    }
+                                };
+            
+                                if !file_exists {
+                                    if let Err(e) = wtr.write_all(b"uid,client_id,status\n") {
+                                        eprintln!("Failed to write header to file: {}", e);
+                                        return;
+                                    }
+                                }
+            
+                                if let Err(e) = wtr.write_all(record.as_bytes()) {
+                                    eprintln!("Failed to write record to file: {}", e);
+                                } else {
+                                    println!("New record appended to CSV: {:?}", online_status);
+                                }
+                            } else {
+                                println!(
+                                    "Duplicate record found for UID/IP: {}. No changes needed.",
+                                    online_status.ip
+                                );
                             }
+            
                         }
                         Err(e) => eprintln!("Failed to parse OnlineStatus: {}", e),
                     }
                 } else {
                     eprintln!("Malformed DIR_OF_SERV message: {}", message);
                 }
-             } else if message.starts_with("STATUS:") {
-                // Extract the JSON payload
+            }
+             else if message.starts_with("STATUS:") {
                 if let Some(json_payload) = message.strip_prefix("STATUS:") {
-                    // Attempt to deserialize the JSON into OnlineStatus
                     match serde_json::from_str::<OnlineStatus>(json_payload) {
                         Ok(online_status) => {
                             println!("Received OnlineStatus: {:?}", online_status);
+            
+                            let file_path = "directory_of_service.csv";
+                            let mut is_duplicate = false;
+                            let mut needs_update = false;
+                            let mut updated_records = Vec::new();
+            
+                            // Check if the file exists and process existing records
+                            if Path::new(file_path).exists() {
+                                if let Ok(content) = fs::read_to_string(file_path) {
+                                    for line in content.lines() {
+                                        // Skip the header
+                                        if line.starts_with("uid,client_id,status") {
+                                            updated_records.push(line.to_string());
+                                            continue;
+                                        }
+            
+                                        let mut fields: Vec<&str> = line.split(',').collect();
+                                        if fields.len() == 3 {
+                                            if fields[0] == online_status.ip {
+                                                is_duplicate = true;
+            
+                                                // Check if the status has changed
+                                                let existing_status = fields[2] == "true";
+                                                if existing_status != online_status.status {
+                                                    fields[2] = if online_status.status {
+                                                        "true"
+                                                    } else {
+                                                        "false"
+                                                    };
+                                                    needs_update = true;
+                                                    println!(
+                                                        "Updating record for UID/IP: {} from {} to {}",
+                                                        online_status.ip,
+                                                        existing_status,
+                                                        online_status.status
+                                                    );
+                                                }
+                                            }
+                                        }
+            
+                                        // Add either the updated or original record to the list
+                                        updated_records.push(fields.join(","));
+                                    }
+                                }
+                            }
+            
+                            // Write updated data back to the CSV if needed
+                            if is_duplicate && needs_update {
+                                let mut file = match OpenOptions::new()
+                                    .write(true)
+                                    .truncate(true)
+                                    .open(file_path)
+                                {
+                                    Ok(file) => file,
+                                    Err(e) => {
+                                        eprintln!("Failed to open file for updating: {}", e);
+                                        return;
+                                    }
+                                };
+            
+                                for record in &updated_records {
+                                    if let Err(e) = writeln!(file, "{}", record) {
+                                        eprintln!("Failed to write record: {}", e);
+                                    }
+                                }
+                                println!("CSV file updated successfully.");
+                            } else if !is_duplicate {
+                                // Append the new record if it's not a duplicate
+                                let record = format!(
+                                    "{},{},{}\n",
+                                    online_status.ip,
+                                    online_status.client_id,
+                                    online_status.status
+                                );
+            
+                                let file_exists = Path::new(file_path).exists();
+                                let mut wtr = match OpenOptions::new()
+                                    .create(true)
+                                    .append(true)
+                                    .open(file_path)
+                                {
+                                    Ok(file) => file,
+                                    Err(e) => {
+                                        eprintln!("Failed to open file: {}", e);
+                                        return;
+                                    }
+                                };
+            
+                                if !file_exists {
+                                    if let Err(e) = wtr.write_all(b"uid,client_id,status\n") {
+                                        eprintln!("Failed to write header to file: {}", e);
+                                        return;
+                                    }
+                                }
+            
+                                if let Err(e) = wtr.write_all(record.as_bytes()) {
+                                    eprintln!("Failed to write record to file: {}", e);
+                                } else {
+                                    println!("New record appended to CSV: {:?}", online_status);
+                                }
+                            } else {
+                                println!(
+                                    "Duplicate record found for UID/IP: {}. No changes needed.",
+                                    online_status.ip
+                                );
+                            }
+            
+                            // Acknowledge the message
+                            let message_to_client = format!("STATUS_ACK:{}", my_address);
+                            socket_election
+                                .lock()
+                                .await
+                                .send_to(message_to_client.as_bytes(), addr)
+                                .await
+                                .unwrap();
+                            println!("Ack sent to {}", addr);
+            
+                            // Let the homies know
+                            if let Ok(online_status_json) = serde_json::to_string(&online_status) {
+                                for peer in &peers {
+                                    let message_to_send = format!("DIR_OF_SERV:{}", online_status_json);
+                                    socket_election
+                                        .lock()
+                                        .await
+                                        .send_to(message_to_send.as_bytes(), peer)
+                                        .await
+                                        .unwrap();
+                                }
+                            }
+
+                            else {
+                                eprintln!("Failed to serialize OnlineStatus for broadcasting.");
+                            }
+            
+                            // Receive samples from client only if client is online
+                            if online_status.status {
+                                // Convert peers to Vec<String> for the function call
+                                let peers_for_samples: Vec<String> = peers.iter().map(|&peer| peer.to_string()).collect();
                             
-                        // send ack that i receive the status
-                        let message_to_client = format!("STATUS_ACK:{}", my_address);
-                        socket_election.lock().await.send_to(message_to_client.as_bytes(), addr).await.unwrap();
-                        println!("Ack sent to {}", addr);
-                            let serialized_status = match serde_json::to_string(&online_status) {
-                                Ok(data) => data,
-                                Err(e) => {
-                                    eprintln!("Failed to serialize OnlineStatus: {}", e);
-                                    return;
-                                }
-                            };
-            
-                            // Forward the STATUS message to other peers
-                            for peer in &peers {
-                                let message_to_send = format!("DIR_OF_SERV:{}", serialized_status);
-                                socket_election
-                                    .lock()
-                                    .await
-                                    .send_to(message_to_send.as_bytes(), peer)
-                                    .await
-                                    .unwrap();
-                            }
-            
-                            // Write the information to the CSV file
-                            let record = format!(
-                                "{},{},{}\n",
-                                online_status.ip,
-                                online_status.client_id,
-                                online_status.status
-                            );
-            
-                            let file_exists = Path::new("directory_of_service.csv").exists();
-                            let mut wtr = match OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open("directory_of_service.csv")
-                            {
-                                Ok(file) => file,
-                                Err(e) => {
-                                    eprintln!("Failed to open file: {}", e);
-                                    return;
-                                }
-                            };
-            
-                            if !file_exists {
-                                if let Err(e) = wtr.write_all(b"uid,client_id,status\n") {
-                                    eprintln!("Failed to write header to file: {}", e);
-                                    return;
+                                if let Err(e) = receive_samples(&socket_election, &online_status.client_id, &addr, &peers_for_samples).await {
+                                    eprintln!("Failed to receive samples: {:?}", e);
                                 }
                             }
-            
-                            if let Err(e) = wtr.write_all(record.as_bytes()) {
-                                eprintln!("Failed to write record to file: {}", e);
-                            }
+
                         }
                         Err(e) => eprintln!("Failed to parse OnlineStatus: {}", e),
                     }
                 } else {
                     eprintln!("Malformed STATUS message: {}", message);
                 }
-            } else if message.starts_with("Request_DOS") {
-             println!("Received DOS message from {}", addr);
-               // parse the directory of service.csv file and send the info to the client
-                let file = fs::read_to_string("directory_of_service.csv").expect("Unable to read file");
-                let message_to_send = format!("DOS:{}", file);
-                let message = message_to_send.as_bytes();
-                socket_election
-                .lock()
-                .await
-                .send_to(message, addr)
-                .await
-                .unwrap();
             }
+            else if message.starts_with("Request_DOS") {
+                println!("Received DOS message from {}", addr);
+            
+                // Parse the directory of service.csv file and send the info to the client
+                let file = fs::read_to_string("directory_of_service.csv").expect("Unable to read file");
+                let dos_message = format!("DOS:{}", file);
+                socket_election.lock().await.send_to(dos_message.as_bytes(), addr).await.unwrap();
+            
+                // Now send all available samples
+                let samples_dir = "samples";
+                if !Path::new(samples_dir).exists() {
+                    // No samples directory exists
+                    let no_samples_message = "NO_SAMPLES";
+                    socket_election.lock().await.send_to(no_samples_message.as_bytes(), addr).await.unwrap();
+                    println!("Notified client that no samples are available.");
+                } else {
+                    // Iterate through all folders and files in `samples/`
+                    for entry in fs::read_dir(samples_dir).expect("Failed to read samples directory") {
+                        if let Ok(client_folder) = entry {
+                            let client_folder_path = client_folder.path();
+                            if client_folder_path.is_dir() {
+                                let client_id = client_folder.file_name().to_string_lossy().to_string();
+            
+                                for sample in fs::read_dir(client_folder_path).expect("Failed to read client folder") {
+                                    if let Ok(sample_file) = sample {
+                                        let sample_path = sample_file.path();
+                                        if sample_path.is_file() {
+                                            let sample_name = sample_file.file_name().to_string_lossy().to_string();
+            
+                                            // Send metadata first
+                                            let metadata_message = format!("SAMPLE:{}:{}", client_id, sample_name);
+                                            socket_election.lock().await.send_to(metadata_message.as_bytes(), addr).await.unwrap();
+                                            println!("Sent metadata for sample {}:{}", client_id, sample_name);
+            
+                                            // Send the file contents
+                                            let sample_data = fs::read(&sample_path).expect("Failed to read sample file");
+                                            socket_election.lock().await.send_to(&sample_data, addr).await.unwrap();
+                                            println!("Sent file {} to {}", sample_name, addr);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+            
+                    // Notify the client that all samples are sent
+                    let done_message = "SAMPLES_DONE";
+                    socket_election.lock().await.send_to(done_message.as_bytes(), addr).await.unwrap();
+                    println!("Notified client that all samples are sent.");
+                }
+            }
+
+            else if message.starts_with("SAMPLE_SYNC:") {
+                if let Some(metadata) = message.strip_prefix("SAMPLE_SYNC:") {
+                    let parts: Vec<&str> = metadata.split(':').collect();
+                    if parts.len() < 2 {
+                        eprintln!("Invalid SAMPLE_SYNC message: {}", metadata);
+                        continue;
+                    }
+            
+                    let client_id = parts[0];
+                    let image_name = parts[1];
+            
+                    // Create the folder for this client
+                    let client_samples_dir = format!("samples/{}", client_id);
+                    std::fs::create_dir_all(&client_samples_dir).expect("Failed to create client samples directory");
+            
+                    // Receive the image data
+                    let mut buffer = [0u8; 4096];
+                    let (size, addr) = match socket_election.lock().await.recv_from(&mut buffer).await {
+                        Ok(result) => result,
+                        Err(e) => {
+                            eprintln!("Failed to receive image data: {:?}", e);
+                            continue;
+                        }
+                    };
+                    println!("Received image data from {}", addr);
+            
+                    let image_path = format!("{}/{}.jpg", client_samples_dir, image_name);
+                    if let Err(e) = std::fs::write(&image_path, &buffer[..size]) {
+                        eprintln!("Failed to write image data: {:?}", e);
+                        continue;
+                    }
+                    println!("Stored image: {}", image_path);
+                }
+            }
+            
                       
         }
     });
