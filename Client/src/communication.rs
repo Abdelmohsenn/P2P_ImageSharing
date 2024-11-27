@@ -7,7 +7,6 @@ use tokio::net::UdpSocket;
 use std::collections::HashMap;
 use tokio::time::{sleep, timeout, Duration};
 
-
 // Function to send samples from the client
 pub async fn send_samples(
     socket: &UdpSocket,
@@ -36,7 +35,9 @@ pub async fn send_samples(
 
                 // Send metadata
                 let metadata_message = format!("SAMPLE_UPLOAD:{}:{}", client_id, original_name);
-                socket.send_to(metadata_message.as_bytes(), server_address).await?;
+                socket
+                    .send_to(metadata_message.as_bytes(), server_address)
+                    .await?;
                 println!("Sent metadata for sample: {}", original_name);
 
                 // Send file data
@@ -52,7 +53,6 @@ pub async fn send_samples(
     println!("Notified server that all samples are sent.");
     Ok(())
 }
-
 
 pub async fn send_image(socket: &UdpSocket) -> io::Result<()> {
     // Prompt the user for the image path
@@ -254,7 +254,10 @@ pub async fn start_p2p_listener(client_address: &str, samples_dir: &str) -> io::
                     .nth(1)
                     .unwrap_or("");
 
-                println!("Received request for image '{}' from {}", image_id, peer_addr);
+                println!(
+                    "Received request for image '{}' from {}",
+                    image_id, peer_addr
+                );
 
                 // Check if the image exists in the samples directory
                 let image_path = format!("{}/{}.jpg", samples_dir, image_id);
@@ -283,13 +286,16 @@ pub async fn start_p2p_listener(client_address: &str, samples_dir: &str) -> io::
                                 message.extend_from_slice(&(i as u32).to_be_bytes()); // Add chunk number
                                 message.extend_from_slice(chunk); // Add chunk data
 
-                                socket.send_to(&message, peer_addr).await.unwrap_or_else(|e| {
-                                    eprintln!(
-                                        "Failed to send chunk {} for image '{}': {:?}",
-                                        i, image_id, e
-                                    );
-                                    0
-                                });
+                                socket
+                                    .send_to(&message, peer_addr)
+                                    .await
+                                    .unwrap_or_else(|e| {
+                                        eprintln!(
+                                            "Failed to send chunk {} for image '{}': {:?}",
+                                            i, image_id, e
+                                        );
+                                        0
+                                    });
                                 println!(
                                     "Sent chunk {}/{} of image '{}' to {}",
                                     i + 1,
@@ -326,7 +332,6 @@ pub async fn start_p2p_listener(client_address: &str, samples_dir: &str) -> io::
     Ok(())
 }
 
-
 pub async fn request_image_by_id(
     socket: &UdpSocket,
     image_id: &str,
@@ -338,7 +343,9 @@ pub async fn request_image_by_id(
     if let Some(peer_address) = client_map.get(&client_id) {
         // Send the request to the correct peer
         let request_message = format!("REQUEST_IMAGE:{}", image_id);
-        socket.send_to(request_message.as_bytes(), peer_address).await?;
+        socket
+            .send_to(request_message.as_bytes(), peer_address)
+            .await?;
         println!("Requested image '{}' from peer {}", image_id, peer_address);
 
         // Prepare to receive the total number of chunks
@@ -365,7 +372,12 @@ pub async fn request_image_by_id(
 
                 if chunk_number < total_chunks {
                     received_chunks[chunk_number] = Some(chunk_data.to_vec());
-                    println!("Received chunk {}/{} for image '{}'", chunk_number + 1, total_chunks, image_id);
+                    println!(
+                        "Received chunk {}/{} for image '{}'",
+                        chunk_number + 1,
+                        total_chunks,
+                        image_id
+                    );
                 }
             }
 
@@ -377,7 +389,8 @@ pub async fn request_image_by_id(
 
             // Save the reassembled image
             let received_samples_dir = "received_samples";
-            std::fs::create_dir_all(received_samples_dir).expect("Failed to create 'received_samples' directory");
+            std::fs::create_dir_all(received_samples_dir)
+                .expect("Failed to create 'received_samples' directory");
 
             let image_path = format!("{}/{}.jpg", received_samples_dir, image_id);
             std::fs::write(&image_path, &image_data).expect("Failed to save received image");
@@ -393,5 +406,3 @@ pub async fn request_image_by_id(
 
     Ok(())
 }
-
-
