@@ -681,6 +681,7 @@ pub async fn middleware() -> io::Result<()> {
                 println!("NACK sent for sequence number {}", expected_sequence_num);
 
                 continue;
+                
             }
 
             if received_chunks % 10 == 0 {

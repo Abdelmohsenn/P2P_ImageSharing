@@ -14,6 +14,7 @@ pub async fn send_samples(
     server_address: &str,
 ) -> io::Result<()> {
     let samples_dir = "samples";
+    
 
     // Check if the samples folder exists
     if !Path::new(samples_dir).exists() {

@@ -289,6 +289,7 @@ async fn main() -> io::Result<()> {
                     .await?;
 
                 let mut received_acks = false;
+                
 
                 while !received_acks {
                     let timeout_duration = Duration::from_secs(1);
