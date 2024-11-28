@@ -376,17 +376,29 @@ pub fn get_image_paths(dir: &str) -> Result<Vec<String>, std::io::Error> {
     Ok(image_paths)
 }
 
-pub async fn start_p2p_listener(client_address: &str, samples_dir: &str) -> io::Result<()> {
-    let socket = UdpSocket::bind(client_address).await?;
+pub async fn start_p2p_listener(client_address: &str, samples_dir: &str, client: &str) -> io::Result<()> {
+
+    let server1 = "127.0.0.1";
+    let server2 = "127.0.0.1";
+    let server3 = "127.0.0.1";
+    /////////////////////////////////////////////////////////////////////////////
+    let server1_address = format!("{}:{}", server1, "8083");
+    let server2_addres = format!("{}:{}", server2, "8084");
+    let server3_address = format!("{}:{}", server3, "2010");
+    /////////////////////////////////////////////////////////////////////////////
     println!("P2P Listener running on {}", client_address);
+
     let servers: Vec<SocketAddr> = vec![
-        "127.0.0.1:8083".parse().unwrap(),
-        "127.0.0.1:8084".parse().unwrap(),
-        "127.0.0.1:2010".parse().unwrap(),
-    ];
-    let clientaddress2 = "127.0.0.1:9080"; //  client address to send image for encryption
-    let socket6 = UdpSocket::bind("127.0.0.1:2005").await?; // socket for encrypted image recieving
-    let socket2 = UdpSocket::bind(clientaddress2).await?;
+        server1_address.parse().unwrap(),
+        server2_addres.parse().unwrap(),
+        server3_address.parse().unwrap(),
+     ];
+
+    let client_election_and_image = format!("{}:{}", client, "9080"); //  client address to send image for encryption
+    let client_encyrpted_image_back = format!("{}:{}", client, "2005"); //  client address to send image for encryption
+    let socket = UdpSocket::bind(client_address).await?;
+    let socket6 = UdpSocket::bind(client_encyrpted_image_back).await?; // socket for encrypted image recieving
+    let socket2 = UdpSocket::bind(client_election_and_image).await?;
 
 
     let samples_dir = "images";

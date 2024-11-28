@@ -101,13 +101,24 @@ fn handle_auth() -> io::Result<bool> {
 
 #[tokio::main]
 pub async fn main() -> io::Result<()> {
+    /////////////////////////////////////////////////////////////////////////////
+    let client = "127.0.0.1"; // to be changed to the real client address
+    
+    let server1 = "127.0.0.1";
+    let server2 = "127.0.0.1";
+    let server3 = "127.0.0.1";
+    /////////////////////////////////////////////////////////////////////////////
+    let server1_address = format!("{}:{}", server1, "8083");
+    let server2_addres = format!("{}:{}", server2, "8084");
+    let server3_address = format!("{}:{}", server3, "2010");
+    /////////////////////////////////////////////////////////////////////////////
     let mut count = 0;
     let authenticated = handle_auth()?;
     let mut leader_address = String::new();
     let servers: Vec<SocketAddr> = vec![
-        "127.0.0.1:8083".parse().unwrap(),
-        "127.0.0.1:8084".parse().unwrap(),
-        "127.0.0.1:2010".parse().unwrap(),
+       server1_address.parse().unwrap(),
+       server2_addres.parse().unwrap(),
+       server3_address.parse().unwrap(),
     ];
     println!("before");
     let mut rng = thread_rng();
@@ -123,11 +134,13 @@ pub async fn main() -> io::Result<()> {
     let client_map = Arc::new(Mutex::new(HashMap::new()));
 
     if authenticated {
-        let p2p_listener = "127.0.0.1:8079";
+
+
+        let p2p_listener = format!("{}:{}", client,"8079");
         let mut samples_sent = false;
-        start_p2p_listener(&p2p_listener, "samples").await?;
+        start_p2p_listener(&p2p_listener, "samples", &client).await?;
         loop {
-            let clientaddress = "127.0.0.1:8080"; // my client server address
+            let clientaddress = format!("{}:{}", client, "8080");
             let socket = UdpSocket::bind(clientaddress).await?;
 
             let info = OnlineStatus {

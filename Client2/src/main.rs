@@ -14,13 +14,6 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use steganography::decoder::Decoder;
-use steganography::encoder::Encoder;
-use steganography::util::bytes_to_str;
-use steganography::util::file_as_dynamic_image;
-use steganography::util::file_as_image_buffer;
-use steganography::util::save_image_buffer;
-use steganography::util::str_to_bytes;
 use tokio::net::UdpSocket;
 use tokio::signal;
 use tokio::time;
@@ -28,10 +21,11 @@ use tokio::time::{sleep, timeout, Duration};
 
 mod middleware;
 use middleware::request_image_by_id;
-use middleware::send_image;
 use middleware::send_samples;
 use middleware::start_p2p_listener;
 use middleware::middleware;
+
+// struct for image stats
 
 // struct for online status
 #[derive(Serialize, Deserialize)]
@@ -62,6 +56,7 @@ async fn parse_and_store_dos(dos_content: &str) -> HashMap<String, String> {
 }
 
 // The middleware function containing the logic for the client such as communicating with the servers and sending messages to the servers
+
 
 fn handle_auth() -> io::Result<bool> {
     // get UID from directory of service from server instead (just a placeholder)
@@ -105,14 +100,25 @@ fn handle_auth() -> io::Result<bool> {
 }
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
+pub async fn main() -> io::Result<()> {
+    /////////////////////////////////////////////////////////////////////////////
+    let client = "127.0.0.1"; // to be changed to the real client address
+    
+    let server1 = "127.0.0.1";
+    let server2 = "127.0.0.1";
+    let server3 = "127.0.0.1";
+    /////////////////////////////////////////////////////////////////////////////
+    let server1_address = format!("{}:{}", server1, "8083");
+    let server2_addres = format!("{}:{}", server2, "8084");
+    let server3_address = format!("{}:{}", server3, "2010");
+    /////////////////////////////////////////////////////////////////////////////
     let mut count = 0;
     let authenticated = handle_auth()?;
     let mut leader_address = String::new();
     let servers: Vec<SocketAddr> = vec![
-        "127.0.0.1:8083".parse().unwrap(),
-        "127.0.0.1:8084".parse().unwrap(),
-        "127.0.0.1:2010".parse().unwrap(),
+       server1_address.parse().unwrap(),
+       server2_addres.parse().unwrap(),
+       server3_address.parse().unwrap(),
     ];
     println!("before");
     let mut rng = thread_rng();
@@ -126,17 +132,21 @@ async fn main() -> io::Result<()> {
     }
 
     let client_map = Arc::new(Mutex::new(HashMap::new()));
+
     if authenticated {
+
+
+        let p2p_listener = format!("{}:{}", client,"6999");
         let mut samples_sent = false;
-        let p2p_listener = "127.0.0.1:6999";
-        start_p2p_listener(&p2p_listener, "samples").await?;
+        start_p2p_listener(&p2p_listener, "samples", &client).await?;
         loop {
-            let clientaddress = "127.0.0.1:7000"; // my client server address
+            let clientaddress = format!("{}:{}", client, "7000");
             let socket = UdpSocket::bind(clientaddress).await?;
+
             let info = OnlineStatus {
                 ip: p2p_listener.to_string(),
                 status: true,
-                client_id: "6".to_string(),
+                client_id: "5".to_string(),
             };
             let serialized_info = serde_json::to_string(&info).unwrap();
             // state a timeout for the client to send the status and receive STATUS_ACK, if not received send again after timeout
@@ -150,6 +160,7 @@ async fn main() -> io::Result<()> {
                     .await?;
 
                 let mut received_acks = false;
+
 
                 while !received_acks {
                     let timeout_duration = Duration::from_secs(1);
@@ -196,22 +207,30 @@ async fn main() -> io::Result<()> {
     |  4) If you want to view your images, please enter (V) or (v) |   
      -------------------------------------------------------------- "
             );
-
             let mut input = String::new();
             io::stdin()
                 .read_line(&mut input)
                 .expect("Failed to read input");
 
-            // if yes, send ELECT message to all servers
-            // if input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("Y") {
-            //     for addr in &servers {
-            //         socket.send_to(b"ELECT", addr).await?;
-            //         println!("message sent to {}", addr);
-            //     }
-            //     middleware(&socket2, &socket6).await?;
-            // } 
 
-            if input.trim().eq_ignore_ascii_case("e")
+                // if input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("Y") {
+                //     for addr in &servers {
+                //         socket.send_to(b"ELECT", addr).await?;
+                //         println!("message sent to {}", addr);
+                //     }
+                //     // middleware(&socket2, &socket6, "5").await?;
+                // } 
+                if input.trim().eq_ignore_ascii_case("r") {
+                    // Request image by ID
+                    println!("Enter image ID to request (e.g., 5_0): ");
+                    let mut image_id = String::new();
+                    io::stdin()
+                        .read_line(&mut image_id)
+                        .expect("Failed to read image ID");
+    
+                    let client_map_locked = client_map.lock().unwrap();
+                    request_image_by_id(&socket, image_id.trim(), &*client_map_locked).await?;
+                }  else if input.trim().eq_ignore_ascii_case("e")
                 || input.trim().eq_ignore_ascii_case("E")
             {
                 println!("Exiting...");
@@ -219,7 +238,7 @@ async fn main() -> io::Result<()> {
                 let info = OnlineStatus {
                     ip: p2p_listener.to_string(),
                     status: false,
-                    client_id: "6".to_string(),
+                    client_id: "5".to_string(),
                 };
                 let serialized_info = serde_json::to_string(&info).unwrap();
                 let message_to_send = format!("STATUS:{}", serialized_info);
@@ -309,16 +328,6 @@ async fn main() -> io::Result<()> {
                 if !samples_received {
                     println!("No samples were transmitted during the DoS request.");
                 }
-            } else if input.trim().eq_ignore_ascii_case("r") {
-                // Request image by ID
-                println!("Enter image ID to request (e.g., 5_0): ");
-                let mut image_id = String::new();
-                io::stdin()
-                    .read_line(&mut image_id)
-                    .expect("Failed to read image ID");
-
-                let client_map_locked = client_map.lock().unwrap();
-                request_image_by_id(&socket, image_id.trim(), &*client_map_locked).await?;
             } else {
                 println!("Invalid input. Please try again.");
             }
