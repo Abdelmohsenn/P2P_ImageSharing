@@ -68,13 +68,7 @@ pub async fn server_election(socket: &Arc<Mutex<UdpSocket>>, peers: Vec<&str>) -
         }
     }
     // Check if any responses were received, if not, assume leadership
-    if received_responses.is_empty() {
-        println!(
-            "No responses received. This server (Process ID: {}) assumes leadership.",
-            server_id
-        );
-        return Ok(true);
-    }
+   
 
     // Add own server's data to the list
     received_responses.push((cpu_usage, server_id as u32));
@@ -92,7 +86,14 @@ pub async fn server_election(socket: &Arc<Mutex<UdpSocket>>, peers: Vec<&str>) -
         println!("Server (Process ID: {}) is not the leader.", server_id);
     }
 
-    // Confirm the leader to peers
+
+    if received_responses.is_empty() {
+        println!(
+            "No responses received. This server (Process ID: {}) assumes leadership.",
+            server_id
+        );
+        return Ok(true);
+    }
     if leader {
         for peer_address in &peers {
             socket

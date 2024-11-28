@@ -683,7 +683,7 @@ pub async fn middleware() -> io::Result<()> {
                     .lock()
                     .await
                     .send_to(
-                        format!("Kosm distributed {}", expected_sequence_num - 1).as_bytes(),
+                        format!("ACK{}", expected_sequence_num - 1).as_bytes(),
                         addr,
                     )
                     .await
