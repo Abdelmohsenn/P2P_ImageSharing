@@ -132,10 +132,7 @@ async fn main() -> io::Result<()> {
         start_p2p_listener(&p2p_listener, "samples").await?;
         loop {
             let clientaddress = "127.0.0.1:7000"; // my client server address
-            let clientaddress2 = "127.0.0.1:7005"; // my client server address
             let socket = UdpSocket::bind(clientaddress).await?;
-            let socket2 = UdpSocket::bind(clientaddress2).await?;
-            let socket6 = UdpSocket::bind("127.0.0.1:7001").await?; // socket for encrypted image recieving
             let info = OnlineStatus {
                 ip: p2p_listener.to_string(),
                 status: true,
@@ -206,13 +203,15 @@ async fn main() -> io::Result<()> {
                 .expect("Failed to read input");
 
             // if yes, send ELECT message to all servers
-            if input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("Y") {
-                for addr in &servers {
-                    socket.send_to(b"ELECT", addr).await?;
-                    println!("message sent to {}", addr);
-                }
-                middleware(&socket2, &socket6).await?;
-            } else if input.trim().eq_ignore_ascii_case("e")
+            // if input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("Y") {
+            //     for addr in &servers {
+            //         socket.send_to(b"ELECT", addr).await?;
+            //         println!("message sent to {}", addr);
+            //     }
+            //     middleware(&socket2, &socket6).await?;
+            // } 
+
+            if input.trim().eq_ignore_ascii_case("e")
                 || input.trim().eq_ignore_ascii_case("E")
             {
                 println!("Exiting...");

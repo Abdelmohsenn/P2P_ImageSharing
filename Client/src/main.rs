@@ -128,10 +128,7 @@ pub async fn main() -> io::Result<()> {
         start_p2p_listener(&p2p_listener, "samples").await?;
         loop {
             let clientaddress = "127.0.0.1:8080"; // my client server address
-            let clientaddress2 = "127.0.0.1:9080"; // my client server address
             let socket = UdpSocket::bind(clientaddress).await?;
-            let socket2 = UdpSocket::bind(clientaddress2).await?;
-            let socket6 = UdpSocket::bind("127.0.0.1:2005").await?; // socket for encrypted image recieving
 
             let info = OnlineStatus {
                 ip: p2p_listener.to_string(),
@@ -203,13 +200,14 @@ pub async fn main() -> io::Result<()> {
                 .expect("Failed to read input");
 
 
-                if input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("Y") {
-                    for addr in &servers {
-                        socket.send_to(b"ELECT", addr).await?;
-                        println!("message sent to {}", addr);
-                    }
-                    middleware(&socket2, &socket6).await?;
-                } else if input.trim().eq_ignore_ascii_case("r") {
+                // if input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("Y") {
+                //     for addr in &servers {
+                //         socket.send_to(b"ELECT", addr).await?;
+                //         println!("message sent to {}", addr);
+                //     }
+                //     // middleware(&socket2, &socket6, "5").await?;
+                // } 
+                if input.trim().eq_ignore_ascii_case("r") {
                     // Request image by ID
                     println!("Enter image ID to request (e.g., 5_0): ");
                     let mut image_id = String::new();

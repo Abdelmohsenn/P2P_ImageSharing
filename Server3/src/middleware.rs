@@ -152,8 +152,9 @@ pub async fn middleware() -> io::Result<()> {
         "127.0.0.1:8083", // Address of Peer 1
         "127.0.0.1:8084", // Address of Peer 2
     ];
-    let client_address1= "127.0.0.1:8080";
-    let client_address2= "127.0.0.1:7000";
+    let client_address1= "127.0.0.1:2005"; // ehna mehtagen nshel 127.0.0.1 bas le constant da address 1 lel 
+    let client_address2= "127.0.0.1:7001"; // ehna mehtagen nshel 127.0.0.1 bas le constant
+    let mut client = "";
     let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(my_address).await?));
     let socket_election = Arc::new(tokio::sync::Mutex::new(
         UdpSocket::bind("127.0.0.1:2010").await?,
@@ -774,6 +775,12 @@ pub async fn middleware() -> io::Result<()> {
             let mut ack_buffer = [0u8; 1024];
             let max_retries = 5;
 
+            if client_addr.to_string() == "127.0.0.1:9080" {
+                client = "127.0.0.1:2005";
+            } else if client_addr.to_string()=="127.0.0.1:7005"{
+                client ="127.0.0.1:7001";
+            }
+
             for i in 0..total_chunks {
                 let start = i * chunk_size;
                 let end = std::cmp::min(start + chunk_size, encrypted_data.len());
@@ -786,7 +793,7 @@ pub async fn middleware() -> io::Result<()> {
                 socket6
                     .lock()
                     .await
-                    .send_to(&chunk, "127.0.0.1:2005")
+                    .send_to(&chunk, client)
                     .await
                     .expect("Failed to send encrypted image chunk");
                 println!("Sent encrypted chunk {} of {}", i + 1, total_chunks);
@@ -826,7 +833,7 @@ pub async fn middleware() -> io::Result<()> {
                             socket6
                                 .lock()
                                 .await
-                                .send_to(&chunk, "127.0.0.1:2005")
+                                .send_to(&chunk, client)
                                 .await
                                 .expect("Failed to resend chunk");
                         }
@@ -843,7 +850,7 @@ pub async fn middleware() -> io::Result<()> {
                             socket6
                                 .lock()
                                 .await
-                                .send_to(&chunk, "127.0.0.1:2005")
+                                .send_to(&chunk, client)
                                 .await
                                 .expect("Failed to resend chunk");
                         }
@@ -855,7 +862,7 @@ pub async fn middleware() -> io::Result<()> {
             socket6
                 .lock()
                 .await
-                .send_to(b"END", "127.0.0.1:2005")
+                .send_to(b"END", client)
                 .await
                 .expect("Failed to send END message");
             println!("Encrypted image transmission completed.");
