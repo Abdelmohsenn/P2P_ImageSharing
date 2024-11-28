@@ -152,7 +152,8 @@ pub async fn middleware() -> io::Result<()> {
         "127.0.0.1:8083", // Address of Peer 1
         "127.0.0.1:8084", // Address of Peer 2
     ];
-    let client_address = "127.0.0.1:8080";
+    let client_address1= "127.0.0.1:8080";
+    let client_address2= "127.0.0.1:7000";
     let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(my_address).await?));
     let socket_election = Arc::new(tokio::sync::Mutex::new(
         UdpSocket::bind("127.0.0.1:2010").await?,
@@ -200,12 +201,21 @@ pub async fn middleware() -> io::Result<()> {
                             leader = true;
 
                             let message_to_client = format!("LEADER_ACK:{}", my_address);
-                            socketsendipback
-                                .lock()
-                                .await
-                                .send_to(message_to_client.as_bytes(), client_address)
-                                .await
-                                .unwrap();
+                            if addr.to_string() == client_address1{
+                                socketsendipback
+                                    .lock()
+                                    .await
+                                    .send_to(message_to_client.as_bytes(), "127.0.0.1:9080")
+                                    .await
+                                    .unwrap();
+                                } else if addr.to_string() == client_address2{
+                                    socketsendipback
+                                    .lock()
+                                    .await
+                                    .send_to(message_to_client.as_bytes(), "127.0.0.1:7005")
+                                    .await
+                                    .unwrap();
+                                }
                         } else {
                             println!("This server is not the leader.");
                             leader = false;

@@ -154,7 +154,8 @@ async fn distribute_samples_to_peers(
 pub async fn middleware() -> io::Result<()> {
     let my_address = "127.0.0.1:8082";
     let peers = vec!["127.0.0.1:8084", "127.0.0.1:2010"];
-    let client_address = "127.0.0.1:8080";
+    let client_address1= "127.0.0.1:8080";
+    let client_address2= "127.0.0.1:7000";
 
     let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(my_address).await?));
 
@@ -210,12 +211,21 @@ pub async fn middleware() -> io::Result<()> {
                             leader = true;
 
                             let message_to_client = format!("LEADER_ACK:{}", my_address);
+                            if addr.to_string() == client_address1{
                             socketsendipback
                                 .lock()
                                 .await
-                                .send_to(message_to_client.as_bytes(), client_address)
+                                .send_to(message_to_client.as_bytes(), "127.0.0.1:9080")
                                 .await
                                 .unwrap();
+                            } else if addr.to_string() == client_address2{
+                                socketsendipback
+                                .lock()
+                                .await
+                                .send_to(message_to_client.as_bytes(), "127.0.0.1:7005")
+                                .await
+                                .unwrap();
+                            }
                         } else {
                             println!("This server is not the leader.");
                             leader = false;
@@ -692,7 +702,7 @@ pub async fn middleware() -> io::Result<()> {
             }
         }
     }); 
-    
+
 
     tokio::spawn(async move {
         while let Some((image_data, client_addr)) = rx.recv().await {

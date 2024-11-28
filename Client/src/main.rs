@@ -14,30 +14,19 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
-use steganography::decoder::Decoder;
-use steganography::encoder::Encoder;
-use steganography::util::bytes_to_str;
-use steganography::util::file_as_dynamic_image;
-use steganography::util::file_as_image_buffer;
-use steganography::util::save_image_buffer;
-use steganography::util::str_to_bytes;
 use tokio::net::UdpSocket;
 use tokio::signal;
 use tokio::time;
 use tokio::time::{sleep, timeout, Duration};
 
-mod communication;
-use communication::request_image_by_id;
-use communication::send_image;
-use communication::send_samples;
-use communication::start_p2p_listener;
+mod middleware;
+use middleware::request_image_by_id;
+use middleware::send_samples;
+use middleware::start_p2p_listener;
+use middleware::middleware;
 
 // struct for image stats
-struct ImageStats {
-    client_id: String, // Unique identifier
-    img_id: String,    // Image identifier
-    num_of_views: u8,  // Number of views (using unsigned 8-bit integer)
-}
+
 // struct for online status
 #[derive(Serialize, Deserialize)]
 struct OnlineStatus {
@@ -67,137 +56,7 @@ async fn parse_and_store_dos(dos_content: &str) -> HashMap<String, String> {
 }
 
 // The middleware function containing the logic for the client such as communicating with the servers and sending messages to the servers
-async fn middleware(socket: &UdpSocket, socket6: &UdpSocket) -> io::Result<String> {
-    let mut buffer = [0u8; 2048];
-    let mut leader_address = String::new();
 
-    loop {
-        // Set a timeout for receiving the leader address and acknowledgment
-
-        let receive_result = timeout(Duration::from_secs(5), socket.recv_from(&mut buffer)).await;
-
-        match receive_result {
-            Ok(Ok((size, _))) => {
-                let message = String::from_utf8_lossy(&buffer[..size]);
-
-                // Leader acknowledgment received with the address
-
-                if message.starts_with("LEADER_ACK") {
-                    leader_address = message.replace("LEADER_ACK:", "").trim().to_string();
-                    println!(
-                        "Leader identified at {}. Proceeding to connect...",
-                        leader_address
-                    );
-                    socket.connect(&leader_address).await?; // make this the leader address after the ack is sent back from the server
-                    break;
-                } else {
-                    println!("Received message without Leader_Ack, retrying...");
-                    println!("Received: {}", message);
-                }
-            }
-            Ok(Err(e)) => {
-                eprintln!("Error receiving data: {:?}", e);
-            }
-            Err(_) => {
-                // Timeout occurred
-                println!("Timeout waiting for Leader_Ack. Retrying...");
-            }
-        }
-    }
-
-    send_image(&socket).await?;
-
-    // Allows user to input image path (one-by-one)
-
-    println!("Waiting for encrypted image from server...");
-    let mut encrypted_image_data = Vec::new();
-    let mut buffer = [0u8; 2048];
-    let mut expected_sequence_num: u32 = 0;
-
-    loop {
-        let (len, addr) = socket6.recv_from(&mut buffer).await?;
-
-        if &buffer[..len] == b"END" {
-            println!("Encrypted image received completely from server.");
-            break;
-        }
-        // Extract the sequence number and data
-        let sequence_num = u32::from_be_bytes(buffer[0..4].try_into().unwrap());
-        let chunk_data = &buffer[4..len];
-
-        if sequence_num == expected_sequence_num {
-            encrypted_image_data.extend_from_slice(chunk_data);
-            println!(
-                "Received encrypted chunk with sequence number {}",
-                sequence_num
-            );
-            // Send ACK for the received chunk
-
-            let ack_message = format!("ACK {}", sequence_num);
-            socket6.send_to(ack_message.as_bytes(), addr).await?;
-            expected_sequence_num += 1;
-        } else {
-            // Send NACK if the sequence number is not as expected
-            let nack_message = format!("NACK {}", expected_sequence_num);
-            socket6.send_to(nack_message.as_bytes(), addr).await?;
-            println!("NACK sent for sequence number {}", expected_sequence_num);
-        }
-    }
-
-    // Save the received encrypted image as a PNG file
-    let encrypted_image_path = "encrypted_image_from_server.png";
-
-    let mut encrypted_image_file = File::create(encrypted_image_path)?;
-    encrypted_image_file.write_all(&encrypted_image_data)?;
-    println!("Encrypted image saved as PNG at {}", encrypted_image_path);
-
-    // // // // mn hena, example lel view encryption / / / / // / / /
-    let stats = ImageStats {
-        client_id: String::from("5"),
-        img_id: String::from("596132"),
-        num_of_views: 10,
-    };
-
-    // Define a secret message to hide in our picture
-    let views = stats.num_of_views.to_string();
-    println!("Encoding message: {}", views);
-    // Convert our string to bytes
-    let payload = str_to_bytes(&views);
-    println!("Payload bytes: {:?}", payload);
-    // Load the image where we want to embed our secret message
-    let destination_image = file_as_dynamic_image("encrypted_image_from_server.png".to_string());
-    // Create an encoder
-    let enc = Encoder::new(payload, destination_image);
-    // Encode our message into the alpha channel of the image
-    let result = enc.encode_alpha();
-    // Save the new image
-    save_image_buffer(result, "hidden_message.png".to_string());
-    // Load the image with the secret message
-    let encoded_image = file_as_image_buffer("hidden_message.png".to_string());
-    // Create a decoder
-    let dec = Decoder::new(encoded_image);
-    // Decode the image by reading the alpha channel
-    let out_buffer = dec.decode_alpha();
-    // Filter out padding bytes and null bytes
-    let clean_buffer: Vec<u8> = out_buffer
-        .into_iter()
-        .filter(|&b| b != 0xff && b != 0x00)
-        .take(payload.len()) // Only take as many bytes as we originally encoded
-        .collect();
-    println!("Decoded bytes: {:?}", clean_buffer);
-    // Convert bytes to string with proper error handling
-    let message = String::from_utf8_lossy(&clean_buffer).into_owned();
-    println!("Decoded message: {}", message);
-    // / / // /  / leghayt hena / nehayt el view encryption / / // / / /
-    // decrypt the image
-    let encrypted_image = file_as_dynamic_image(encrypted_image_path.to_string()).to_rgba();
-    let decoder = Decoder::new(encrypted_image);
-    let decrypted_data = decoder.decode_alpha();
-    let output_path = "decrypted_image.png";
-    std::fs::write(output_path, &decrypted_data)?;
-    println!("Decrypted image saved successfully as PNG!");
-    Ok(leader_address)
-}
 
 fn handle_auth() -> io::Result<bool> {
     // get UID from directory of service from server instead (just a placeholder)
@@ -241,7 +100,7 @@ fn handle_auth() -> io::Result<bool> {
 }
 
 #[tokio::main]
-async fn main() -> io::Result<()> {
+pub async fn main() -> io::Result<()> {
     let mut count = 0;
     let authenticated = handle_auth()?;
     let mut leader_address = String::new();
@@ -269,7 +128,9 @@ async fn main() -> io::Result<()> {
         start_p2p_listener(&p2p_listener, "samples").await?;
         loop {
             let clientaddress = "127.0.0.1:8080"; // my client server address
+            let clientaddress2 = "127.0.0.1:9080"; // my client server address
             let socket = UdpSocket::bind(clientaddress).await?;
+            let socket2 = UdpSocket::bind(clientaddress2).await?;
             let socket6 = UdpSocket::bind("127.0.0.1:2005").await?; // socket for encrypted image recieving
 
             let info = OnlineStatus {
@@ -289,7 +150,7 @@ async fn main() -> io::Result<()> {
                     .await?;
 
                 let mut received_acks = false;
-                
+
 
                 while !received_acks {
                     let timeout_duration = Duration::from_secs(1);
@@ -347,7 +208,7 @@ async fn main() -> io::Result<()> {
                         socket.send_to(b"ELECT", addr).await?;
                         println!("message sent to {}", addr);
                     }
-                    middleware(&socket, &socket6).await?;
+                    middleware(&socket2, &socket6).await?;
                 } else if input.trim().eq_ignore_ascii_case("r") {
                     // Request image by ID
                     println!("Enter image ID to request (e.g., 5_0): ");
