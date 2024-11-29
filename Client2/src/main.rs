@@ -146,7 +146,7 @@ pub async fn main() -> io::Result<()> {
             let info = OnlineStatus {
                 ip: p2p_listener.to_string(),
                 status: true,
-                client_id: "5".to_string(),
+                client_id: "6".to_string(),
             };
             let serialized_info = serde_json::to_string(&info).unwrap();
             // state a timeout for the client to send the status and receive STATUS_ACK, if not received send again after timeout
@@ -238,7 +238,7 @@ pub async fn main() -> io::Result<()> {
                 let info = OnlineStatus {
                     ip: p2p_listener.to_string(),
                     status: false,
-                    client_id: "5".to_string(),
+                    client_id: "6".to_string(),
                 };
                 let serialized_info = serde_json::to_string(&info).unwrap();
                 let message_to_send = format!("STATUS:{}", serialized_info);

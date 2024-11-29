@@ -436,71 +436,71 @@ pub async fn start_p2p_listener(client_address: &str, samples_dir: &str, client:
                 middleware(&socket2, &socket6, image_id).await;
                 
                 // Check if the image exists in the samples directory
-                // let image_path = format!("{}/{}.jpg", samples_dir, image_id); // images/5
-                // if Path::new(&image_path).exists() {
-                //     match fs::read(&image_path) {
-                //         Ok(image_data) => {
-                //             let chunk_size = 1024; // Chunk size for transmission
-                //             let total_chunks = (image_data.len() + chunk_size - 1) / chunk_size;
+                let image_path = format!("encrypted_image_from_server.png"); // images/5
+                if Path::new(&image_path).exists() {
+                    match fs::read(&image_path) {
+                        Ok(image_data) => {
+                            let chunk_size = 1024; // Chunk size for transmission
+                            let total_chunks = (image_data.len() + chunk_size - 1) / chunk_size;
 
-                //             // Send the total number of chunks first
-                //             let total_chunks_message = format!("TOTAL_CHUNKS:{}", total_chunks);
-                //             socket
-                //                 .send_to(total_chunks_message.as_bytes(), peer_addr)
-                //                 .await
-                //                 .unwrap_or_else(|e| {
-                //                     eprintln!(
-                //                         "Failed to send total chunks message for image '{}': {:?}",
-                //                         image_id, e
-                //                     );
-                //                     0
-                //                 });
+                            // Send the total number of chunks first
+                            let total_chunks_message = format!("TOTAL_CHUNKS:{}", total_chunks);
+                            socket
+                                .send_to(total_chunks_message.as_bytes(), peer_addr)
+                                .await
+                                .unwrap_or_else(|e| {
+                                    eprintln!(
+                                        "Failed to send total chunks message for image '{}': {:?}",
+                                        image_id, e
+                                    );
+                                    0
+                                });
 
-                //             // Send the image data in chunks
-                //             for (i, chunk) in image_data.chunks(chunk_size).enumerate() {
-                //                 let mut message = Vec::new();
-                //                 message.extend_from_slice(&(i as u32).to_be_bytes()); // Add chunk number
-                //                 message.extend_from_slice(chunk); // Add chunk data
+                            // Send the image data in chunks
+                            for (i, chunk) in image_data.chunks(chunk_size).enumerate() {
+                                let mut message = Vec::new();
+                                message.extend_from_slice(&(i as u32).to_be_bytes()); // Add chunk number
+                                message.extend_from_slice(chunk); // Add chunk data
 
-                //                 socket
-                //                     .send_to(&message, peer_addr)
-                //                     .await
-                //                     .unwrap_or_else(|e| {
-                //                         eprintln!(
-                //                             "Failed to send chunk {} for image '{}': {:?}",
-                //                             i, image_id, e
-                //                         );
-                //                         0
-                //                     });
-                //                 println!(
-                //                     "Sent chunk {}/{} of image '{}' to {}",
-                //                     i + 1,
-                //                     total_chunks,
-                //                     image_id,
-                //                     peer_addr
-                //                 );
-                //             }
-                //             println!("Completed sending image '{}' to {}", image_id, peer_addr);
-                //         }
-                //         Err(e) => {
-                //             eprintln!("Failed to read image '{}': {:?}", image_id, e);
-                //         }
-                //     }
-                // } else {
-                //     // Notify the peer that the image doesn't exist
-                //     let error_message = format!("IMAGE_NOT_FOUND:{}", image_id);
-                //     socket
-                //         .send_to(error_message.as_bytes(), peer_addr)
-                //         .await
-                //         .unwrap_or_else(|e| {
-                //             eprintln!(
-                //                 "Failed to notify peer about missing image '{}': {:?}",
-                //                 image_id, e
-                //             );
-                //             0
-                //         });
-                //     println!("Image '{}' not found. Notified {}", image_id, peer_addr);
-                // }
+                                socket
+                                    .send_to(&message, peer_addr)
+                                    .await
+                                    .unwrap_or_else(|e| {
+                                        eprintln!(
+                                            "Failed to send chunk {} for image '{}': {:?}",
+                                            i, image_id, e
+                                        );
+                                        0
+                                    });
+                                println!(
+                                    "Sent chunk {}/{} of image '{}' to {}",
+                                    i + 1,
+                                    total_chunks,
+                                    image_id,
+                                    peer_addr
+                                );
+                            }
+                            println!("Completed sending image '{}' to {}", image_id, peer_addr);
+                        }
+                        Err(e) => {
+                            eprintln!("Failed to read image '{}': {:?}", image_id, e);
+                        }
+                    }
+                } else {
+                    // Notify the peer that the image doesn't exist
+                    let error_message = format!("IMAGE_NOT_FOUND:{}", image_id);
+                    socket
+                        .send_to(error_message.as_bytes(), peer_addr)
+                        .await
+                        .unwrap_or_else(|e| {
+                            eprintln!(
+                                "Failed to notify peer about missing image '{}': {:?}",
+                                image_id, e
+                            );
+                            0
+                        });
+                    println!("Image '{}' not found. Notified {}", image_id, peer_addr);
+                }
             }
         }
     });
