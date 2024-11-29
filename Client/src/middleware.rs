@@ -6,6 +6,12 @@ use tokio::net::UdpSocket;
 use std::collections::HashMap;
 use tokio::time::{sleep, timeout, Duration};
 
+use std::fs::File;
+use std::fs::OpenOptions;
+use std::io::{self, Cursor, Write};
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use steganography::decoder::Decoder;
 use steganography::encoder::Encoder;
 use steganography::util::bytes_to_str;
@@ -13,27 +19,20 @@ use steganography::util::file_as_dynamic_image;
 use steganography::util::file_as_image_buffer;
 use steganography::util::save_image_buffer;
 use steganography::util::str_to_bytes;
-use std::fs::File;
-use std::fs::OpenOptions;
-use std::io::{self, Cursor, Write};
-use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
-use std::time::Instant;
 use tokio::signal;
 use tokio::time;
 
-
 struct ImageStats {
     client_id: String, // Unique identifier
-    img_id: String,    // Image identifier
     num_of_views: u8,  // Number of views (using unsigned 8-bit integer)
 }
-pub async fn middleware(socket: &UdpSocket, socket6: &UdpSocket, image_id: &str) -> io::Result<String> {
+pub async fn middleware(socket6: &UdpSocket, image_id: &str, reinitiated:&str) -> io::Result<String> {
     let mut buffer = [0u8; 2048];
     let mut leader_address = String::new();
 
     loop {
         // Set a timeout for receiving the leader address and acknowledgment
+        let socket = UdpSocket::bind(reinitiated).await?;
 
         let receive_result = timeout(Duration::from_secs(5), socket.recv_from(&mut buffer)).await;
         match receive_result {
@@ -48,6 +47,7 @@ pub async fn middleware(socket: &UdpSocket, socket6: &UdpSocket, image_id: &str)
                         leader_address
                     );
                     socket.connect(&leader_address).await?; // make this the leader address after the ack is sent back from the server
+                    send_image(&socket, image_id).await?;
                     break;
                 } else {
                     println!("Received message without Leader_Ack, retrying...");
@@ -63,9 +63,6 @@ pub async fn middleware(socket: &UdpSocket, socket6: &UdpSocket, image_id: &str)
             }
         }
     }
-
-    send_image(&socket, image_id).await?;
-
     // Allows user to input image path (one-by-one)
 
     println!("Waiting for encrypted image from server...");
@@ -113,41 +110,9 @@ pub async fn middleware(socket: &UdpSocket, socket6: &UdpSocket, image_id: &str)
     // // // // mn hena, example lel view encryption / / / / // / / /
     let stats = ImageStats {
         client_id: String::from("5"),
-        img_id: String::from("596132"),
         num_of_views: 10,
     };
 
-    // Define a secret message to hide in our picture
-    let views = stats.num_of_views.to_string();
-    println!("Encoding message: {}", views);
-    // Convert our string to bytes
-    let payload = str_to_bytes(&views);
-    println!("Payload bytes: {:?}", payload);
-    // Load the image where we want to embed our secret message
-    let destination_image = file_as_dynamic_image("encrypted_image_from_server.png".to_string());
-    // Create an encoder
-    let enc = Encoder::new(payload, destination_image);
-    // Encode our message into the alpha channel of the image
-    let result = enc.encode_alpha();
-    // Save the new image
-    save_image_buffer(result, "hidden_message.png".to_string());
-    // Load the image with the secret message
-    let encoded_image = file_as_image_buffer("hidden_message.png".to_string());
-    // Create a decoder
-    let dec = Decoder::new(encoded_image);
-    // Decode the image by reading the alpha channel
-    let out_buffer = dec.decode_alpha();
-    // Filter out padding bytes and null bytes
-    let clean_buffer: Vec<u8> = out_buffer
-        .into_iter()
-        .filter(|&b| b != 0xff && b != 0x00)
-        .take(payload.len()) // Only take as many bytes as we originally encoded
-        .collect();
-    println!("Decoded bytes: {:?}", clean_buffer);
-    // Convert bytes to string with proper error handling
-    let message = String::from_utf8_lossy(&clean_buffer).into_owned();
-    println!("Decoded message: {}", message);
-    // / / // /  / leghayt hena / nehayt el view encryption / / // / / /
     // decrypt the image
     let encrypted_image = file_as_dynamic_image(encrypted_image_path.to_string()).to_rgba();
     let decoder = Decoder::new(encrypted_image);
@@ -203,7 +168,7 @@ pub async fn send_samples(
     Ok(())
 }
 
-pub async fn send_image(socket: &UdpSocket, image_id:&str) -> io::Result<()> {
+pub async fn send_image(socket: &UdpSocket, image_id: &str) -> io::Result<()> {
     // Prompt the user for the image path
     // let mut input = String::new();
     // println!("Enter your Image Path to send to the server: ");
@@ -213,9 +178,10 @@ pub async fn send_image(socket: &UdpSocket, image_id:&str) -> io::Result<()> {
     let image_path = format!("{}/{}.jpg", "images", image_id); // images/5
 
     // Load the image from the given path
-    let format =
-        image::guess_format(&std::fs::read(image_path.clone()).expect("Failed to read the image file"))
-            .unwrap_or(ImageFormat::Jpeg);
+    let format = image::guess_format(
+        &std::fs::read(image_path.clone()).expect("Failed to read the image file"),
+    )
+    .unwrap_or(ImageFormat::Jpeg);
     let img = image::open(image_path).map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
     let mut buf = Cursor::new(Vec::new());
     img.write_to(&mut buf, format)
@@ -376,8 +342,10 @@ pub fn get_image_paths(dir: &str) -> Result<Vec<String>, std::io::Error> {
     Ok(image_paths)
 }
 
-pub async fn start_p2p_listener(client_address: &str, samples_dir: &str, client: &str) -> io::Result<()> {
-
+pub async fn start_p2p_listener(
+    client_address: &str,
+    client: &str,
+) -> io::Result<()> {
     let server1 = "127.0.0.1";
     let server2 = "127.0.0.1";
     let server3 = "127.0.0.1";
@@ -392,14 +360,12 @@ pub async fn start_p2p_listener(client_address: &str, samples_dir: &str, client:
         server1_address.parse().unwrap(),
         server2_addres.parse().unwrap(),
         server3_address.parse().unwrap(),
-     ];
+    ];
 
     let client_election_and_image = format!("{}:{}", client, "9080"); //  client address to send image for encryption
     let client_encyrpted_image_back = format!("{}:{}", client, "2005"); //  client address to send image for encryption
     let socket = UdpSocket::bind(client_address).await?;
     let socket6 = UdpSocket::bind(client_encyrpted_image_back).await?; // socket for encrypted image recieving
-    let socket2 = UdpSocket::bind(client_election_and_image).await?;
-
 
     let samples_dir = "images";
     tokio::spawn(async move {
@@ -433,8 +399,8 @@ pub async fn start_p2p_listener(client_address: &str, samples_dir: &str, client:
                     socket6.send_to(b"ELECT", addr).await;
                     println!("Sent ELECT message to {}", addr);
                 }
-                middleware(&socket2, &socket6, image_id).await;
-                
+                middleware(&socket6, image_id, &client_election_and_image).await;
+
                 // Check if the image exists in the samples directory
                 let image_path = format!("encrypted_image_from_server.png"); // images/5
                 if Path::new(&image_path).exists() {
@@ -568,9 +534,15 @@ pub async fn request_image_by_id(
             std::fs::create_dir_all(received_samples_dir)
                 .expect("Failed to create 'received_samples' directory");
 
-            let image_path = format!("{}/{}.jpg", received_samples_dir, image_id);
+            let image_path = format!("{}/{}.png", received_samples_dir, image_id);
             std::fs::write(&image_path, &image_data).expect("Failed to save received image");
             println!("Received and saved image '{}' from peer.", image_id);
+            let encrypted_image = file_as_dynamic_image(image_path.to_string()).to_rgba();
+            let decoder = Decoder::new(encrypted_image);
+            let decrypted_data = decoder.decode_alpha();
+            let output_path = "decrypted_image.png";
+            std::fs::write(output_path, &decrypted_data)?;
+            println!("Decrypted image saved successfully as PNG!");
         } else if total_chunks_message.starts_with("IMAGE_NOT_FOUND:") {
             println!("Peer responded: Image '{}' not found.", image_id);
         } else {

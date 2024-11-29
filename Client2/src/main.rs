@@ -20,10 +20,10 @@ use tokio::time;
 use tokio::time::{sleep, timeout, Duration};
 
 mod middleware;
+use middleware::middleware;
 use middleware::request_image_by_id;
 use middleware::send_samples;
 use middleware::start_p2p_listener;
-use middleware::middleware;
 
 // struct for image stats
 
@@ -56,7 +56,6 @@ async fn parse_and_store_dos(dos_content: &str) -> HashMap<String, String> {
 }
 
 // The middleware function containing the logic for the client such as communicating with the servers and sending messages to the servers
-
 
 fn handle_auth() -> io::Result<bool> {
     // get UID from directory of service from server instead (just a placeholder)
@@ -103,7 +102,7 @@ fn handle_auth() -> io::Result<bool> {
 pub async fn main() -> io::Result<()> {
     /////////////////////////////////////////////////////////////////////////////
     let client = "127.0.0.1"; // to be changed to the real client address
-    
+
     let server1 = "127.0.0.1";
     let server2 = "127.0.0.1";
     let server3 = "127.0.0.1";
@@ -116,9 +115,9 @@ pub async fn main() -> io::Result<()> {
     let authenticated = handle_auth()?;
     let mut leader_address = String::new();
     let servers: Vec<SocketAddr> = vec![
-       server1_address.parse().unwrap(),
-       server2_addres.parse().unwrap(),
-       server3_address.parse().unwrap(),
+        server1_address.parse().unwrap(),
+        server2_addres.parse().unwrap(),
+        server3_address.parse().unwrap(),
     ];
     println!("before");
     let mut rng = thread_rng();
@@ -134,11 +133,9 @@ pub async fn main() -> io::Result<()> {
     let client_map = Arc::new(Mutex::new(HashMap::new()));
 
     if authenticated {
-
-
-        let p2p_listener = format!("{}:{}", client,"6999");
+        let p2p_listener = format!("{}:{}", client, "6999");
         let mut samples_sent = false;
-        start_p2p_listener(&p2p_listener, "samples", &client).await?;
+        start_p2p_listener(&p2p_listener, &client).await?;
         loop {
             let clientaddress = format!("{}:{}", client, "7000");
             let socket = UdpSocket::bind(clientaddress).await?;
@@ -160,7 +157,6 @@ pub async fn main() -> io::Result<()> {
                     .await?;
 
                 let mut received_acks = false;
-
 
                 while !received_acks {
                     let timeout_duration = Duration::from_secs(1);
@@ -212,25 +208,24 @@ pub async fn main() -> io::Result<()> {
                 .read_line(&mut input)
                 .expect("Failed to read input");
 
+            // if input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("Y") {
+            //     for addr in &servers {
+            //         socket.send_to(b"ELECT", addr).await?;
+            //         println!("message sent to {}", addr);
+            //     }
+            //     // middleware(&socket2, &socket6, "5").await?;
+            // }
+            if input.trim().eq_ignore_ascii_case("r") {
+                // Request image by ID
+                println!("Enter image ID to request (e.g., 5_0): ");
+                let mut image_id = String::new();
+                io::stdin()
+                    .read_line(&mut image_id)
+                    .expect("Failed to read image ID");
 
-                // if input.trim().eq_ignore_ascii_case("y") || input.trim().eq_ignore_ascii_case("Y") {
-                //     for addr in &servers {
-                //         socket.send_to(b"ELECT", addr).await?;
-                //         println!("message sent to {}", addr);
-                //     }
-                //     // middleware(&socket2, &socket6, "5").await?;
-                // } 
-                if input.trim().eq_ignore_ascii_case("r") {
-                    // Request image by ID
-                    println!("Enter image ID to request (e.g., 5_0): ");
-                    let mut image_id = String::new();
-                    io::stdin()
-                        .read_line(&mut image_id)
-                        .expect("Failed to read image ID");
-    
-                    let client_map_locked = client_map.lock().unwrap();
-                    request_image_by_id(&socket, image_id.trim(), &*client_map_locked).await?;
-                }  else if input.trim().eq_ignore_ascii_case("e")
+                let client_map_locked = client_map.lock().unwrap();
+                request_image_by_id(&socket, image_id.trim(), &*client_map_locked).await?;
+            } else if input.trim().eq_ignore_ascii_case("e")
                 || input.trim().eq_ignore_ascii_case("E")
             {
                 println!("Exiting...");
