@@ -21,11 +21,122 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::signal;
 use tokio::time;
+use image::{ImageBuffer, Rgba, RgbaImage};
+use std::convert::TryInto;
+
 
 
 struct ImageStats {
     client_id: String, // Unique identifier
     num_of_views: u8,  // Number of views (using unsigned 8-bit integer)
+}
+
+fn embed_data_in_image(
+    image_path: &str,
+    views: u32,
+    client_id: u32,
+    output_path: &str,
+) -> io::Result<()> {
+    // Load the image
+    let original_image = image::open(image_path)
+        .expect("Failed to open image")
+        .into_rgba8();
+    
+    let (width, height) = original_image.dimensions();
+    
+    // Create a new image with an extra row
+    let mut new_image: RgbaImage = ImageBuffer::new(width, height + 1);
+    
+    // Copy original image data
+    for y in 0..height {
+        for x in 0..width {
+            new_image.put_pixel(x, y, *original_image.get_pixel(x, y));
+        }
+    }
+    
+    // Convert views and client_id to bytes
+    let views_bytes = views.to_be_bytes();
+    let client_id_bytes = client_id.to_be_bytes();
+    
+    // Embed metadata in the extra row
+    // First 4 pixels store views, next 4 pixels store client_id
+    for i in 0..4u32 {
+        new_image.put_pixel(i, height, Rgba([
+            views_bytes[i as usize],
+            0,
+            0,
+            255
+        ]));
+        
+        new_image.put_pixel(i + 4, height, Rgba([
+            client_id_bytes[i as usize],
+            0,
+            0,
+            255
+        ]));
+    }
+    
+    // Save the modified image
+    new_image.save(output_path).expect("Failed to save the image");
+    
+    println!("Data embedded in image and saved to {}", output_path);
+    Ok(())
+}
+
+fn extract_data_from_image(image_path: &str) -> (u32, u32) {
+    // Load the image
+    let image = image::open(image_path)
+        .expect("Failed to open image")
+        .into_rgba8();
+    
+    let (_, height) = image.dimensions();
+    let metadata_row = height - 1;
+    
+    // Extract views bytes
+    let mut views_bytes = [0u8; 4];
+    for i in 0..4usize {
+        views_bytes[i] = image.get_pixel(i.try_into().unwrap(), metadata_row)[0];
+    }
+    
+    // Extract client_id bytes
+    let mut client_id_bytes = [0u8; 4];
+    for i in 0..4usize {
+        let x: u32 = (i + 4).try_into().unwrap();
+        client_id_bytes[i] = image.get_pixel(x, metadata_row)[0];
+    }
+    
+    let views = u32::from_be_bytes(views_bytes);
+    let client_id = u32::from_be_bytes(client_id_bytes);
+    
+    (views, client_id)
+}
+
+fn strip_metadata_row(
+    image_path: &str,
+    output_path: &str,
+) -> io::Result<()> {
+    // Load the image
+    let image = image::open(image_path)
+        .expect("Failed to open image")
+        .into_rgba8();
+    
+    let (width, height) = image.dimensions();
+    
+    // Create new image without the metadata row
+    let mut stripped_image: RgbaImage = ImageBuffer::new(width, height - 1);
+    
+    // Copy all rows except the last one
+    for y in 0..height-1 {
+        for x in 0..width {
+            stripped_image.put_pixel(x, y, *image.get_pixel(x, y));
+        }
+    }
+    
+    // Save the stripped image
+    stripped_image.save(output_path).expect("Failed to save the image");
+    println!("Stripped metadata row from image and saved to {}", output_path);
+    
+    Ok(())
 }
 
 pub async fn middleware(socket6: &UdpSocket, image_id: &str, reinitiated:&str) -> io::Result<String> {
@@ -109,8 +220,13 @@ pub async fn middleware(socket6: &UdpSocket, image_id: &str, reinitiated:&str) -
     encrypted_image_file.write_all(&encrypted_image_data)?;
     println!("Encrypted image saved as PNG at {}", encrypted_image_path);
 
-  
-    // decrypt the image
+    let views = 5;
+    let client_id = 6;
+    embed_data_in_image(encrypted_image_path, views, client_id, encrypted_image_path)?;
+    // Extract the data back
+ 
+    // strip_metadata_row(encrypted_image_path, encrypted_image_path)?;
+
     let encrypted_image = file_as_dynamic_image(encrypted_image_path.to_string()).to_rgba();
     let decoder = Decoder::new(encrypted_image);
     let decrypted_data = decoder.decode_alpha();
@@ -441,6 +557,7 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                                 );
                             }
                             println!("Completed sending image '{}' to {}", image_id, peer_addr);
+
                         }
                         Err(e) => {
                             eprintln!("Failed to read image '{}': {:?}", image_id, e);
@@ -534,10 +651,16 @@ pub async fn request_image_by_id(
             println!("Received and saved image '{}' from peer.", image_id);
             // decrypting the image
             let encrypted_image = file_as_dynamic_image(image_path.to_string()).to_rgba();
+
+        ////////////////////////////////////////////////////////////////////////////////////////////////////
+        let (extracted_views, extracted_client_id) = extract_data_from_image(&image_path.to_string());
+        println!("Extracted Views: {}, Extracted Client ID: {}", extracted_views, extracted_client_id);
+        ////////////////////////////////////////////////////////////////////////////////////////////////////
+
             let decoder = Decoder::new(encrypted_image);
             let decrypted_data = decoder.decode_alpha();
             let output_path = "decrypted_image.png";
-            // write it as decyrpte image
+            // write it as decyrpt image
             std::fs::write(output_path, &decrypted_data)?;
             println!("Decrypted image saved successfully as PNG!");
 
