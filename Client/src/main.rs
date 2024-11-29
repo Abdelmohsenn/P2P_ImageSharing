@@ -201,6 +201,7 @@ pub async fn main() -> io::Result<()> {
     |  2) If you want to request an image, please enter (R) or (r) |
     |  3) If you want to exit,             please enter (E) or (e) |   
     |  4) If you want to view your images, please enter (V) or (v) |   
+    |  5) If you want to Control access rights,   enter (C) or (c) |   
      -------------------------------------------------------------- "
             );
             let mut input = String::new();
@@ -241,7 +242,8 @@ pub async fn main() -> io::Result<()> {
                     .send_to(&message_to_send.as_bytes(), assistant)
                     .await?;
                 break;
-            } else if input.trim().eq_ignore_ascii_case("d")
+            }   
+            else if input.trim().eq_ignore_ascii_case("d")
                 || input.trim().eq_ignore_ascii_case("D")
             {
                 // Request DoS and samples

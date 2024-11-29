@@ -592,7 +592,6 @@ pub async fn request_image_by_id(
 ) -> io::Result<()> {
     // Determine the client_id (folder name)
     let client_id = image_id.split('_').next().unwrap_or("").to_string();
-
     if let Some(peer_address) = client_map.get(&client_id) {
         // Send the request to the correct peer
         let request_message = format!("REQUEST_IMAGE:{}", image_id);
@@ -655,6 +654,7 @@ pub async fn request_image_by_id(
         ////////////////////////////////////////////////////////////////////////////////////////////////////
         let (extracted_views, extracted_client_id) = extract_data_from_image(&image_path.to_string());
         println!("Extracted Views: {}, Extracted Client ID: {}", extracted_views, extracted_client_id);
+        println!("Client ID: {}", client_id);
         ////////////////////////////////////////////////////////////////////////////////////////////////////
 
             let decoder = Decoder::new(encrypted_image);

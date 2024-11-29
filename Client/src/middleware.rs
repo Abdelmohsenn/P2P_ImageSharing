@@ -136,19 +136,6 @@ fn strip_metadata_row(
     Ok(())
 }
 
-// fn compare_files(file1: &str, file2: &str) -> io::Result<()> {
-//     let data1 = std::fs::read(file1)?;
-//     let data2 = std::fs::read(file2)?;
-
-//     if data1 == data2 {
-//         println!("Files are identical!");
-//     } else {
-//         println!("Files differ!");
-//     }
-
-//     Ok(())
-// }
-
 pub async fn middleware(socket6: &UdpSocket, image_id: &str, reinitiated:&str) -> io::Result<String> {
     let mut buffer = [0u8; 2048];
     let mut leader_address = String::new();
@@ -334,7 +321,6 @@ pub async fn send_image(socket: &UdpSocket, image_id: &str) -> io::Result<()> {
             total_chunks,
             sequence_num
         );
-
         if i == total_chunks - 1 {
             // Send "END" message
             let mut end_message = Vec::with_capacity(4 + 3);
@@ -593,7 +579,6 @@ pub async fn start_p2p_listener(
 
     Ok(())
 }
-
 pub async fn request_image_by_id(
     socket: &UdpSocket,
     image_id: &str,
@@ -601,7 +586,8 @@ pub async fn request_image_by_id(
 ) -> io::Result<()> {
     // Determine the client_id (folder name)
     let client_id = image_id.split('_').next().unwrap_or("").to_string();
-
+    println!("Client ID: {}", client_id);
+    
     if let Some(peer_address) = client_map.get(&client_id) {
         // Send the request to the correct peer
         let request_message = format!("REQUEST_IMAGE:{}", image_id);
@@ -657,16 +643,17 @@ pub async fn request_image_by_id(
             let image_path = format!("{}/{}.png", received_samples_dir, image_id);
             std::fs::write(&image_path, &image_data).expect("Failed to save received image");
             println!("Received and saved image '{}' from peer.", image_id);
-        /////////////////////////////////////////////////////////////////////////////////////////////////
+            /////////////////////////////////////////////////////////////////////////////////////////////////
             let (extracted_views, extracted_client_id) = extract_data_from_image(&image_path.to_string());
             println!("Extracted Views: {}, Extracted Client ID: {}", extracted_views, extracted_client_id);
-        /////////////////////////////////////////////////////////////////////////////////////////////////
+            /////////////////////////////////////////////////////////////////////////////////////////////////
             let encrypted_image = file_as_dynamic_image(image_path.to_string()).to_rgba();
             let decoder = Decoder::new(encrypted_image);
             let decrypted_data = decoder.decode_alpha();
             let output_path = "decrypted_image.png";
             std::fs::write(output_path, &decrypted_data)?;
             println!("Decrypted image saved successfully as PNG!");
+        
         } else if total_chunks_message.starts_with("IMAGE_NOT_FOUND:") {
             println!("Peer responded: Image '{}' not found.", image_id);
         } else {

@@ -201,6 +201,7 @@ pub async fn main() -> io::Result<()> {
     |  2) If you want to request an image, please enter (R) or (r) |
     |  3) If you want to exit,             please enter (E) or (e) |   
     |  4) If you want to view your images, please enter (V) or (v) |   
+    |  5) If you want to Control access rights,   enter (C) or (c) |   
      -------------------------------------------------------------- "
             );
             let mut input = String::new();
