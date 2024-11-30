@@ -6,6 +6,9 @@ use tokio::net::UdpSocket;
 use std::collections::HashMap;
 use tokio::time::{sleep, timeout, Duration};
 
+use image::{ImageBuffer, Rgba, RgbaImage};
+use std::collections::HashSet;
+use std::convert::TryInto;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io::{self, Cursor, Write};
@@ -21,8 +24,6 @@ use steganography::util::save_image_buffer;
 use steganography::util::str_to_bytes;
 use tokio::signal;
 use tokio::time;
-use image::{ImageBuffer, Rgba, RgbaImage};
-use std::convert::TryInto;
 
 struct ImageStats {
     client_id: String, // Unique identifier
@@ -38,44 +39,40 @@ fn embed_data_in_image(
     let original_image = image::open(image_path)
         .expect("Failed to open image")
         .into_rgba8();
-    
+
     let (width, height) = original_image.dimensions();
-    
+
     // Create a new image with an extra row
     let mut new_image: RgbaImage = ImageBuffer::new(width, height + 1);
-    
+
     // Copy original image data
     for y in 0..height {
         for x in 0..width {
             new_image.put_pixel(x, y, *original_image.get_pixel(x, y));
         }
     }
-    
+
     // Convert views and client_id to bytes
     let views_bytes = views.to_be_bytes();
     let client_id_bytes = client_id.to_be_bytes();
-    
+
     // Embed metadata in the extra row
     // First 4 pixels store views, next 4 pixels store client_id
     for i in 0..4u32 {
-        new_image.put_pixel(i, height, Rgba([
-            views_bytes[i as usize],
-            0,
-            0,
-            255
-        ]));
-        
-        new_image.put_pixel(i + 4, height, Rgba([
-            client_id_bytes[i as usize],
-            0,
-            0,
-            255
-        ]));
+        new_image.put_pixel(i, height, Rgba([views_bytes[i as usize], 0, 0, 255]));
+
+        new_image.put_pixel(
+            i + 4,
+            height,
+            Rgba([client_id_bytes[i as usize], 0, 0, 255]),
+        );
     }
-    
+
     // Save the modified image
-    new_image.save(output_path).expect("Failed to save the image");
-    
+    new_image
+        .save(output_path)
+        .expect("Failed to save the image");
+
     println!("Data embedded in image and saved to {}", output_path);
     Ok(())
 }
@@ -85,58 +82,64 @@ fn extract_data_from_image(image_path: &str) -> (u32, u32) {
     let image = image::open(image_path)
         .expect("Failed to open image")
         .into_rgba8();
-    
+
     let (_, height) = image.dimensions();
     let metadata_row = height - 1;
-    
+
     // Extract views bytes
     let mut views_bytes = [0u8; 4];
     for i in 0..4usize {
         views_bytes[i] = image.get_pixel(i.try_into().unwrap(), metadata_row)[0];
     }
-    
+
     // Extract client_id bytes
     let mut client_id_bytes = [0u8; 4];
     for i in 0..4usize {
         let x: u32 = (i + 4).try_into().unwrap();
         client_id_bytes[i] = image.get_pixel(x, metadata_row)[0];
     }
-    
+
     let views = u32::from_be_bytes(views_bytes);
     let client_id = u32::from_be_bytes(client_id_bytes);
-    
+
     (views, client_id)
 }
 
-fn strip_metadata_row(
-    image_path: &str,
-    output_path: &str,
-) -> io::Result<()> {
+fn strip_metadata_row(image_path: &str, output_path: &str) -> io::Result<()> {
     // Load the image
     let image = image::open(image_path)
         .expect("Failed to open image")
         .into_rgba8();
-    
+
     let (width, height) = image.dimensions();
-    
+
     // Create new image without the metadata row
     let mut stripped_image: RgbaImage = ImageBuffer::new(width, height - 1);
-    
+
     // Copy all rows except the last one
-    for y in 0..height-1 {
+    for y in 0..height - 1 {
         for x in 0..width {
             stripped_image.put_pixel(x, y, *image.get_pixel(x, y));
         }
     }
-    
+
     // Save the stripped image
-    stripped_image.save(output_path).expect("Failed to save the image");
-    println!("Stripped metadata row from image and saved to {}", output_path);
-    
+    stripped_image
+        .save(output_path)
+        .expect("Failed to save the image");
+    println!(
+        "Stripped metadata row from image and saved to {}",
+        output_path
+    );
+
     Ok(())
 }
 
-pub async fn middleware(socket6: &UdpSocket, image_id: &str, reinitiated:&str) -> io::Result<String> {
+pub async fn middleware(
+    socket6: &UdpSocket,
+    image_id: &str,
+    reinitiated: &str,
+) -> io::Result<String> {
     let mut buffer = [0u8; 2048];
     let mut leader_address = String::new();
 
@@ -148,7 +151,7 @@ pub async fn middleware(socket6: &UdpSocket, image_id: &str, reinitiated:&str) -
         match receive_result {
             Ok(Ok((size, _))) => {
                 let message = String::from_utf8_lossy(&buffer[..size]);
-                println!("{}",message);
+                println!("{}", message);
 
                 if message.starts_with("LEADER_ACK:") {
                     leader_address = message.replace("LEADER_ACK:", "").trim().to_string();
@@ -194,8 +197,8 @@ pub async fn middleware(socket6: &UdpSocket, image_id: &str, reinitiated:&str) -
         if sequence_num == expected_sequence_num {
             encrypted_image_data.extend_from_slice(chunk_data);
             // println!(
-            //     "Received encrypted chunk with sequence number {}",
-            //     sequence_num
+            // "Received encrypted chunk with sequence number {}",
+            // sequence_num
             // );
             // Send ACK for the received chunk
 
@@ -219,7 +222,7 @@ pub async fn middleware(socket6: &UdpSocket, image_id: &str, reinitiated:&str) -
 
     let views = 5;
     let client_id = 5;
-  
+
     embed_data_in_image(encrypted_image_path, views, client_id, encrypted_image_path)?;
     let encrypted_image = file_as_dynamic_image(encrypted_image_path.to_string()).to_rgba();
     let decoder = Decoder::new(encrypted_image);
@@ -280,8 +283,8 @@ pub async fn send_image(socket: &UdpSocket, image_id: &str) -> io::Result<()> {
     // let mut input = String::new();
     // println!("Enter your Image Path to send to the server: ");
     // io::stdin()
-    //     .read_line(&mut input)
-    //     .expect("Failed to read line");
+    // .read_line(&mut input)
+    // .expect("Failed to read line");
     let image_path = format!("{}/{}.jpg", "images", image_id); // images/5
 
     // Load the image from the given path
@@ -448,10 +451,7 @@ pub fn get_image_paths(dir: &str) -> Result<Vec<String>, std::io::Error> {
     Ok(image_paths)
 }
 
-pub async fn start_p2p_listener(
-    client_address: &str,
-    client: &str,
-) -> io::Result<()> {
+pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Result<()> {
     let server1 = "127.0.0.1";
     let server2 = "127.0.0.1";
     let server3 = "127.0.0.1";
@@ -468,8 +468,8 @@ pub async fn start_p2p_listener(
         server3_address.parse().unwrap(),
     ];
 
-    let client_election_and_image = format!("{}:{}", client, "9080"); //  client address to send image for encryption
-    let client_encyrpted_image_back = format!("{}:{}", client, "2005"); //  client address to send image for encryption
+    let client_election_and_image = format!("{}:{}", client, "9080"); // client address to send image for encryption
+    let client_encyrpted_image_back = format!("{}:{}", client, "2005"); // client address to send image for encryption
     let socket = UdpSocket::bind(client_address).await?;
     let socket6 = UdpSocket::bind(client_encyrpted_image_back).await?; // socket for encrypted image recieving
 
@@ -500,9 +500,13 @@ pub async fn start_p2p_listener(
                     "Received request for image '{}' from {}",
                     image_id, peer_addr
                 );
+
                 // Send the ELECT message to the servers
                 for addr in &servers {
-                    socket6.send_to(b"ELECT", addr).await;
+                    socket6.send_to(b"ELECT", addr).await.unwrap_or_else(|e| {
+                        eprintln!("Failed to send ELECT message to {}", addr);
+                        0
+                    });
                     println!("Sent ELECT message to {}", addr);
                 }
                 middleware(&socket6, image_id, &client_election_and_image).await;
@@ -528,30 +532,69 @@ pub async fn start_p2p_listener(
                                     0
                                 });
 
-                            // Send the image data in chunks
+                            // Send the image data in chunks with ACK/NACK handling
                             for (i, chunk) in image_data.chunks(chunk_size).enumerate() {
                                 let mut message = Vec::new();
                                 message.extend_from_slice(&(i as u32).to_be_bytes()); // Add chunk number
                                 message.extend_from_slice(chunk); // Add chunk data
 
-                                socket
-                                    .send_to(&message, peer_addr)
+                                loop {
+                                    // Send the chunk
+                                    socket
+                                        .send_to(&message, peer_addr)
+                                        .await
+                                        .unwrap_or_else(|e| {
+                                            eprintln!(
+                                                "Failed to send chunk {} for image '{}': {:?}",
+                                                i, image_id, e
+                                            );
+                                            0
+                                        });
+
+                                    println!(
+                                        "Sent chunk {}/{} of image '{}' to {}",
+                                        i + 1,
+                                        total_chunks,
+                                        image_id,
+                                        peer_addr
+                                    );
+
+                                    // Wait for ACK/NACK or timeout
+                                    let mut ack_buffer = [0u8; 128];
+                                    match tokio::time::timeout(
+                                        std::time::Duration::from_secs(2),
+                                        socket.recv_from(&mut ack_buffer),
+                                    )
                                     .await
-                                    .unwrap_or_else(|e| {
-                                        eprintln!(
-                                            "Failed to send chunk {} for image '{}': {:?}",
-                                            i, image_id, e
-                                        );
-                                        0
-                                    });
-                                println!(
-                                    "Sent chunk {}/{} of image '{}' to {}",
-                                    i + 1,
-                                    total_chunks,
-                                    image_id,
-                                    peer_addr
-                                );
+                                    {
+                                        Ok(Ok((amt, _))) => {
+                                            let response =
+                                                String::from_utf8_lossy(&ack_buffer[..amt]);
+                                            if response == format!("ACK:{}", i) {
+                                                println!("Received ACK for chunk {}", i);
+                                                break; // Move to the next chunk
+                                            } else if response == format!("NACK:{}", i) {
+                                                println!(
+                                                    "Received NACK for chunk {}, resending...",
+                                                    i
+                                                );
+                                                continue; // Resend the chunk
+                                            } else {
+                                                eprintln!("Unexpected response: {}", response);
+                                            }
+                                        }
+                                        Ok(Err(e)) => {
+                                            eprintln!("Error receiving ACK/NACK: {:?}", e);
+                                            continue; // Retry sending the chunk
+                                        }
+                                        Err(_) => {
+                                            println!("Timeout waiting for ACK/NACK for chunk {}, resending...", i);
+                                            continue; // Retry sending the chunk
+                                        }
+                                    }
+                                }
                             }
+
                             println!("Completed sending image '{}' to {}", image_id, peer_addr);
                         }
                         Err(e) => {
@@ -586,8 +629,6 @@ pub async fn request_image_by_id(
 ) -> io::Result<()> {
     // Determine the client_id (folder name)
     let client_id = image_id.split('_').next().unwrap_or("").to_string();
-    println!("Client ID: {}", client_id);
-    
     if let Some(peer_address) = client_map.get(&client_id) {
         // Send the request to the correct peer
         let request_message = format!("REQUEST_IMAGE:{}", image_id);
@@ -611,23 +652,37 @@ pub async fn request_image_by_id(
 
             println!("Expecting {} chunks for image '{}'", total_chunks, image_id);
 
-            // Collect all chunks
+            // Prepare to collect chunks with ACK/NACK
             let mut received_chunks = vec![None; total_chunks];
-            for _ in 0..total_chunks {
-                let (amt, _) = socket.recv_from(&mut buffer).await?;
+            let mut missing_chunks: HashSet<usize> = (0..total_chunks).collect();
+
+            while !missing_chunks.is_empty() {
+                let (amt, src_addr) = socket.recv_from(&mut buffer).await?;
                 let chunk_number = u32::from_be_bytes(buffer[0..4].try_into().unwrap()) as usize;
                 let chunk_data = &buffer[4..amt];
 
-                if chunk_number < total_chunks {
+                if chunk_number < total_chunks && missing_chunks.contains(&chunk_number) {
                     received_chunks[chunk_number] = Some(chunk_data.to_vec());
+                    missing_chunks.remove(&chunk_number);
+
                     println!(
                         "Received chunk {}/{} for image '{}'",
                         chunk_number + 1,
                         total_chunks,
                         image_id
                     );
+
+                    // Send an ACK for the received chunk
+                    let ack_message = format!("ACK:{}", chunk_number);
+                    socket.send_to(ack_message.as_bytes(), src_addr).await?;
+                } else {
+                    // Send a NACK if the chunk is invalid or duplicate
+                    let nack_message = format!("NACK:{}", chunk_number);
+                    socket.send_to(nack_message.as_bytes(), src_addr).await?;
                 }
             }
+
+            println!("All chunks received for image '{}'", image_id);
 
             // Reassemble the image
             let mut image_data = Vec::new();
@@ -643,17 +698,24 @@ pub async fn request_image_by_id(
             let image_path = format!("{}/{}.png", received_samples_dir, image_id);
             std::fs::write(&image_path, &image_data).expect("Failed to save received image");
             println!("Received and saved image '{}' from peer.", image_id);
-            /////////////////////////////////////////////////////////////////////////////////////////////////
-            let (extracted_views, extracted_client_id) = extract_data_from_image(&image_path.to_string());
-            println!("Extracted Views: {}, Extracted Client ID: {}", extracted_views, extracted_client_id);
-            /////////////////////////////////////////////////////////////////////////////////////////////////
+
+            // Decrypting the image
             let encrypted_image = file_as_dynamic_image(image_path.to_string()).to_rgba();
+            ////////////////////////////////////////////////////////////////////////////////////////////////////
+            let (extracted_views, extracted_client_id) =
+                extract_data_from_image(&image_path.to_string());
+            println!(
+                "Extracted Views: {}, Extracted Client ID: {}",
+                extracted_views, extracted_client_id
+            );
+            println!("Client ID: {}", client_id);
+            ////////////////////////////////////////////////////////////////////////////////////////////////////
+
             let decoder = Decoder::new(encrypted_image);
             let decrypted_data = decoder.decode_alpha();
             let output_path = "decrypted_image.png";
             std::fs::write(output_path, &decrypted_data)?;
             println!("Decrypted image saved successfully as PNG!");
-        
         } else if total_chunks_message.starts_with("IMAGE_NOT_FOUND:") {
             println!("Peer responded: Image '{}' not found.", image_id);
         } else {
