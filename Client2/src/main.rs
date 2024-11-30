@@ -336,7 +336,7 @@ pub async fn main() -> io::Result<()> {
                 }
             } 
 
-            else if (input.trim().eq_ignore_ascii_case("v") || input.trim().eq_ignore_ascii_case("V")){
+         else if (input.trim().eq_ignore_ascii_case("v") || input.trim().eq_ignore_ascii_case("V")){
                 
                 // receive input for image id
                 println!("Enter image ID to view: ");
@@ -346,7 +346,21 @@ pub async fn main() -> io::Result<()> {
                     .expect("Failed to read image ID");
 
                 // go into received_images directory
-                let received_images_dir = "received_images";
+
+                // Open the image
+                println!("Opening image...");
+                let views_path = "views_count";
+                let file_path = format!("{}/{}_views.txt", views_path, image_id.trim());
+                let decrypted_path  = "decrypted_image.png";
+                let views = fs::read_to_string(&file_path
+                ).expect("Failed to read views file");
+
+                // Check for platform and run the appropriate command
+                if views == "0" {
+                    eprintln!("You have no views left for this image.");
+                    continue;
+                } else {
+                    let received_images_dir = "received_images";
 
                 // if no received_images directory exists, raise an error
 
@@ -369,13 +383,6 @@ pub async fn main() -> io::Result<()> {
                     eprintln!("Failed to decrypt image: {}", e);
                     continue;
                 }
-
-                // Open the image
-                println!("Opening image...");
-                
-                let decrypted_path  = "decrypted_image.png";
-
-                // Check for platform and run the appropriate command
                 if cfg!(target_os = "windows") {
                     Command::new("cmd")
                         .arg("/C")
@@ -401,18 +408,12 @@ pub async fn main() -> io::Result<()> {
                     eprintln!("Unsupported platform for image viewer");
                 }
 
-                let views_path = "views_count";
-                let file_path = format!("{}/{}_views.txt", views_path, image_id.trim());
-
                 // Check if the views file exists if it doesn't, Raise an error
                 if !Path::new(&file_path).exists() {
                     eprintln!("Views count file not found. Please request the image first.");
                     continue;
                 }
-
-                // Read the views count
-                let views = fs::read_to_string(&file_path
-                ).expect("Failed to read views file");
+               
 
                 // Decrement the views count
 
@@ -425,6 +426,7 @@ pub async fn main() -> io::Result<()> {
                 // delete temporary decrypted image
                 // fs::remove_file(decrypted_path).expect("Failed to delete decrypted image");
             }
+        }
 
             else {
                 println!("Invalid input. Please try again.");

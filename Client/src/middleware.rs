@@ -756,6 +756,6 @@ pub async fn decrypt(image_path: String) -> io::Result<()> {
     let decrypted_data = decoder.decode_alpha();
     let output_path = "decrypted_image.png";
     std::fs::write(output_path, &decrypted_data)?;
-    println!("Decrypted image saved successfully as PNG!");
+    // println!("Decrypted image saved successfully as PNG!");
     Ok(())
 }
