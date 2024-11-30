@@ -152,33 +152,36 @@ async fn distribute_samples_to_peers(
 
 
 pub async fn middleware() -> io::Result<()> {
-    let my_address = "127.0.0.1:8082";
+    let my_address = "127.0.0.1";
+    let client1 = "127.0.0.1";
+    let client2 = "127.0.0.1";
+
+    
+    let mysocket = format!("{}:8082", my_address);
     let peers = vec!["127.0.0.1:8084", "127.0.0.1:2010"];
-    let client_address1= "127.0.0.1:2005"; // ehna mehtagen nshel 127.0.0.1 bas le constant da address 1 lel 
-    let client_address2= "127.0.0.1:7001"; // ehna mehtagen nshel 127.0.0.1 bas le constant
-    let mut client = "";
-    let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(my_address).await?));
+    let client_address1 = format!("{}:2005",client1);
+    let client_address2 = format!("{}:7001",client2);
+    let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(mysocket.clone()).await?));
 
     let socket6 = Arc::new(tokio::sync::Mutex::new(
-        UdpSocket::bind("127.0.0.1:2002").await?,
+        UdpSocket::bind(format!("{}:2002",my_address)).await?,
     ));
-
     let socket_election = Arc::new(tokio::sync::Mutex::new(
-        UdpSocket::bind("127.0.0.1:8083").await?,
+        UdpSocket::bind(format!("{}:8083", my_address)).await?,
     ));
-
+    
     let socketsendipback = Arc::new(tokio::sync::Mutex::new(
-        UdpSocket::bind("127.0.0.1:8086").await?,
+        UdpSocket::bind(format!("{}:8086", my_address)).await?,
     ));
-
+    
     let failure_socket = Arc::new(tokio::sync::Mutex::new(
-        UdpSocket::bind("127.0.0.1:9000").await?,
+        UdpSocket::bind(format!("{}:9000", my_address)).await?,
     ));
-
+    
     let directory_socket = Arc::new(tokio::sync::Mutex::new(
-        UdpSocket::bind("127.0.0.1:2011").await?,
+        UdpSocket::bind(format!("{}:2011", my_address)).await?,
     ));
-
+    
     let fail_flag = Arc::new(Mutex::new(false));
     let fail_flag_clone = Arc::clone(&fail_flag);
 
@@ -210,13 +213,13 @@ pub async fn middleware() -> io::Result<()> {
                             println!("This server is the leader.");
                             leader = true;
 
-                            let message_to_client = format!("LEADER_ACK:{}", my_address);
+                            let message_to_client = format!("LEADER_ACK:{}", mysocket.clone());
                             if addr.to_string() == client_address1{
                                 println!("Client 1 wesel");
                                 socketsendipback
                                     .lock()
                                     .await
-                                    .send_to(message_to_client.as_bytes(), "127.0.0.1:9080")
+                                    .send_to(message_to_client.as_bytes(),format!("{}:9080",client1))
                                     .await
                                     .unwrap();
                                 } else if addr.to_string() == client_address2{
@@ -224,7 +227,7 @@ pub async fn middleware() -> io::Result<()> {
                                     socketsendipback
                                     .lock()
                                     .await
-                                    .send_to(message_to_client.as_bytes(), "127.0.0.1:7005")
+                                    .send_to(message_to_client.as_bytes(), format!("{}:7005",client2))
                                     .await
                                     .unwrap();
                                 }
@@ -468,7 +471,7 @@ pub async fn middleware() -> io::Result<()> {
                             }
             
                             // Acknowledge the message
-                            let message_to_client = format!("STATUS_ACK:{}", my_address);
+                            let message_to_client = format!("STATUS_ACK:{}", mysocket);
                             socket_election
                                 .lock()
                                 .await
@@ -771,10 +774,11 @@ pub async fn middleware() -> io::Result<()> {
             let mut sequence_num: u32 = 0;
             let mut ack_buffer = [0u8; 1024];
             let max_retries = 5;
-            if client_addr.to_string() == "127.0.0.1:9080" {
-                client = "127.0.0.1:2005";
-            } else if client_addr.to_string()=="127.0.0.1:7005"{
-                client ="127.0.0.1:7001";
+            let mut client = String::new();
+            if client_addr.to_string() == format!("{}:9080",client1){
+                client = format!("{}:2005",client1);
+            } else if client_addr.to_string()==format!("{}:7005",client2){
+                client = format!("{}:7001", client2);
             }
             for i in 0..total_chunks {
                 let start = i * chunk_size;
@@ -788,7 +792,7 @@ pub async fn middleware() -> io::Result<()> {
                 socket6
                     .lock()
                     .await
-                    .send_to(&chunk, client)
+                    .send_to(&chunk, &client)
                     .await
                     .expect("Failed to send encrypted image chunk");
                 println!("Sent encrypted chunk {} of {}", i + 1, total_chunks);
@@ -828,7 +832,7 @@ pub async fn middleware() -> io::Result<()> {
                             socket6
                                 .lock()
                                 .await
-                                .send_to(&chunk, client)
+                                .send_to(&chunk, &client)
                                 .await
                                 .expect("Failed to resend chunk");
                         }
@@ -845,7 +849,7 @@ pub async fn middleware() -> io::Result<()> {
                             socket6
                                 .lock()
                                 .await
-                                .send_to(&chunk, client)
+                                .send_to(&chunk, &client)
                                 .await
                                 .expect("Failed to resend chunk");
                         }
@@ -857,7 +861,7 @@ pub async fn middleware() -> io::Result<()> {
             socket6
                 .lock()
                 .await
-                .send_to(b"END", client)
+                .send_to(b"END", &client)
                 .await
                 .expect("Failed to send END message");
             println!("Encrypted image transmission completed.");
