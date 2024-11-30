@@ -6,6 +6,7 @@ use serde_json::json;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{Cursor, Write};
+use std::net::SocketAddr;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -14,15 +15,13 @@ use std::time::Instant;
 use steganography::encoder::*;
 use steganography::util::file_as_dynamic_image;
 use tokio::fs::File;
-use std::net::SocketAddr;
 use tokio::io;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, timeout, Duration};
-
 #[derive(Serialize, Deserialize, Debug)]
 struct OnlineStatus {
-    ip : String,
+    ip: String,
     status: bool,
     client_id: String,
 }
@@ -36,14 +35,16 @@ pub async fn receive_samples(
     println!("Waiting for samples from client: {}", client_id);
 
     let samples_dir = format!("samples/{}", client_id);
-    std::fs::create_dir_all(&samples_dir).expect("Failed to create client-specific 'samples/' directory");
+    std::fs::create_dir_all(&samples_dir)
+        .expect("Failed to create client-specific 'samples/' directory");
 
     let mut buffer = [0u8; 4096]; // Buffer for receiving data
     let timeout_duration = Duration::from_secs(30); // Timeout duration
     let mut received_files = Vec::new(); // Track received files for syncing
 
     loop {
-        let recv_result = timeout(timeout_duration, socket.lock().await.recv_from(&mut buffer)).await;
+        let recv_result =
+            timeout(timeout_duration, socket.lock().await.recv_from(&mut buffer)).await;
 
         match recv_result {
             Ok(Ok((size, addr))) => {
@@ -69,7 +70,8 @@ pub async fn receive_samples(
 
                     // Await the image data
                     let mut buffer = [0u8; 4096];
-                    let recv_image_result = timeout(timeout_duration, socket.lock().await.recv_from(&mut buffer)).await;
+                    let recv_image_result =
+                        timeout(timeout_duration, socket.lock().await.recv_from(&mut buffer)).await;
 
                     match recv_image_result {
                         Ok(Ok((image_size, image_addr))) => {
@@ -83,7 +85,8 @@ pub async fn receive_samples(
                             std::fs::write(&image_path, &buffer[..image_size])?;
                             println!("Saved sample image: {}", image_path);
 
-                            received_files.push((image_id.to_string(), buffer[..image_size].to_vec()));
+                            received_files
+                                .push((image_id.to_string(), buffer[..image_size].to_vec()));
 
                             // Send acknowledgment
                             // socket.lock().await.send_to(b"ACK", client_address).await?;
@@ -94,7 +97,10 @@ pub async fn receive_samples(
                             continue;
                         }
                         Err(_) => {
-                            eprintln!("Timeout while waiting for image data from client: {}", client_id);
+                            eprintln!(
+                                "Timeout while waiting for image data from client: {}",
+                                client_id
+                            );
                             break;
                         }
                     }
@@ -113,7 +119,10 @@ pub async fn receive_samples(
                 continue;
             }
             Err(_) => {
-                eprintln!("Timeout while waiting for samples from client: {}", client_id);
+                eprintln!(
+                    "Timeout while waiting for samples from client: {}",
+                    client_id
+                );
                 break;
             }
         }
@@ -122,7 +131,6 @@ pub async fn receive_samples(
     println!("Stopped waiting for samples from client: {}", client_id);
     Ok(())
 }
-
 
 // Function to distribute samples to peers
 async fn distribute_samples_to_peers(
@@ -134,7 +142,11 @@ async fn distribute_samples_to_peers(
     for (image_id, image_data) in received_files {
         for peer in peers {
             let metadata_message = format!("SAMPLE_SYNC:{}:{}", client_id, image_id);
-            socket.lock().await.send_to(metadata_message.as_bytes(), peer).await?;
+            socket
+                .lock()
+                .await
+                .send_to(metadata_message.as_bytes(), peer)
+                .await?;
             println!("Sent SAMPLE_SYNC metadata to {}", peer);
 
             socket.lock().await.send_to(image_data, peer).await?;
@@ -146,29 +158,38 @@ async fn distribute_samples_to_peers(
 }
 
 pub async fn middleware() -> io::Result<()> {
-    let my_address = "127.0.0.1:2012";
+    let my_address = "127.0.0.1";
+    let client1 = "127.0.0.1";
+    let client2 = "127.0.0.1";
+
+    let mysocket = format!("{}:2012", my_address);
 
     let peers = vec![
         "127.0.0.1:8083", // Address of Peer 1
         "127.0.0.1:8084", // Address of Peer 2
     ];
-    let client_address1= "127.0.0.1:2005"; // ehna mehtagen nshel 127.0.0.1 bas le constant da address 1 lel 
-    let client_address2= "127.0.0.1:7001"; // ehna mehtagen nshel 127.0.0.1 bas le constant
-    let mut client = "";
-    let socket_client = Arc::new(tokio::sync::Mutex::new(UdpSocket::bind(my_address).await?));
-    let socket_election = Arc::new(tokio::sync::Mutex::new(
-        UdpSocket::bind("127.0.0.1:2010").await?,
-    )); // server-server socket
-    let socketsendipback = Arc::new(tokio::sync::Mutex::new(
-        UdpSocket::bind("127.0.0.1:2014").await?,
+    let client_address1 = format!("{}:2005", client1); // Address for Client 1
+    let client_address2 = format!("{}:7001", client2); // Address for Client 2
+
+    let socket_client = Arc::new(tokio::sync::Mutex::new(
+        UdpSocket::bind(mysocket.clone()).await?,
     ));
+    let socket_election = Arc::new(tokio::sync::Mutex::new(
+        UdpSocket::bind(format!("{}:2010", my_address)).await?,
+    )); // server-server socket
+
+    let socketsendipback = Arc::new(tokio::sync::Mutex::new(
+        UdpSocket::bind(format!("{}:2014", my_address)).await?,
+    ));
+
     let socket6 = Arc::new(tokio::sync::Mutex::new(
-        UdpSocket::bind("127.0.0.1:2004").await?,
+        UdpSocket::bind(format!("{}:2004", my_address)).await?,
     ));
 
     let failure_socket = Arc::new(tokio::sync::Mutex::new(
-        UdpSocket::bind("127.0.0.1:9002").await?,
+        UdpSocket::bind(format!("{}:9002", my_address)).await?,
     ));
+
     let fail_flag = Arc::new(Mutex::new(false));
     let fail_flag_clone = Arc::clone(&fail_flag);
 
@@ -177,6 +198,7 @@ pub async fn middleware() -> io::Result<()> {
 
     let socket_clone = Arc::clone(&socket_client);
     let socket_clone = Arc::clone(&socket_client);
+
     tokio::spawn(async move {
         loop {
             let mut buffer = [0u8; 2048];
@@ -188,7 +210,7 @@ pub async fn middleware() -> io::Result<()> {
                 .unwrap();
             let message = String::from_utf8_lossy(&buffer[..size]);
             let fail_flag_value = *fail_flag_clone.lock().unwrap();
-        
+
             if message == "ELECT" && !fail_flag_value {
                 println!(
                     "Election request received from {}. Initiating election...",
@@ -201,22 +223,30 @@ pub async fn middleware() -> io::Result<()> {
                             println!("This server is the leader.");
                             leader = true;
 
-                            let message_to_client = format!("LEADER_ACK:{}", my_address);
-                            if addr.to_string() == client_address1{
+                            let message_to_client = format!("LEADER_ACK:{}", mysocket);
+                            if addr.to_string() == client_address1 {
+                                println!("Client 1 wesel");
                                 socketsendipback
                                     .lock()
                                     .await
-                                    .send_to(message_to_client.as_bytes(), "127.0.0.1:9080")
+                                    .send_to(
+                                        message_to_client.as_bytes(),
+                                        format!("{}:9080", client1),
+                                    )
                                     .await
                                     .unwrap();
-                                } else if addr.to_string() == client_address2{
-                                    socketsendipback
+                            } else if addr.to_string() == client_address2 {
+                                println!("Client 2 wesel");
+                                socketsendipback
                                     .lock()
                                     .await
-                                    .send_to(message_to_client.as_bytes(), "127.0.0.1:7005")
+                                    .send_to(
+                                        message_to_client.as_bytes(),
+                                        format!("{}:7005", client2),
+                                    )
                                     .await
                                     .unwrap();
-                                }
+                            }
                         } else {
                             println!("This server is not the leader.");
                             leader = false;
@@ -230,12 +260,12 @@ pub async fn middleware() -> io::Result<()> {
                     match serde_json::from_str::<OnlineStatus>(json_payload) {
                         Ok(online_status) => {
                             println!("Received OnlineStatus from peer: {:?}", online_status);
-            
+
                             let file_path = "directory_of_service.csv";
                             let mut is_duplicate = false;
                             let mut needs_update = false;
                             let mut updated_records = Vec::new();
-            
+
                             // Check if the file exists and process existing records
                             if Path::new(file_path).exists() {
                                 if let Ok(content) = fs::read_to_string(file_path) {
@@ -245,12 +275,12 @@ pub async fn middleware() -> io::Result<()> {
                                             updated_records.push(line.to_string());
                                             continue;
                                         }
-            
+
                                         let mut fields: Vec<&str> = line.split(',').collect();
                                         if fields.len() == 3 {
                                             if fields[0] == online_status.ip {
                                                 is_duplicate = true;
-            
+
                                                 // Check if the status has changed
                                                 let existing_status = fields[2] == "true";
                                                 if existing_status != online_status.status {
@@ -269,13 +299,13 @@ pub async fn middleware() -> io::Result<()> {
                                                 }
                                             }
                                         }
-            
+
                                         // Add either the updated or original record to the list
                                         updated_records.push(fields.join(","));
                                     }
                                 }
                             }
-            
+
                             // Write updated data back to the CSV if needed
                             if is_duplicate && needs_update {
                                 let mut file = match OpenOptions::new()
@@ -289,7 +319,7 @@ pub async fn middleware() -> io::Result<()> {
                                         return;
                                     }
                                 };
-            
+
                                 for record in &updated_records {
                                     if let Err(e) = writeln!(file, "{}", record) {
                                         eprintln!("Failed to write record: {}", e);
@@ -300,11 +330,9 @@ pub async fn middleware() -> io::Result<()> {
                                 // Append the new record if it's not a duplicate
                                 let record = format!(
                                     "{},{},{}\n",
-                                    online_status.ip,
-                                    online_status.client_id,
-                                    online_status.status
+                                    online_status.ip, online_status.client_id, online_status.status
                                 );
-            
+
                                 let file_exists = Path::new(file_path).exists();
                                 let mut wtr = match OpenOptions::new()
                                     .create(true)
@@ -317,14 +345,14 @@ pub async fn middleware() -> io::Result<()> {
                                         return;
                                     }
                                 };
-            
+
                                 if !file_exists {
                                     if let Err(e) = wtr.write_all(b"uid,client_id,status\n") {
                                         eprintln!("Failed to write header to file: {}", e);
                                         return;
                                     }
                                 }
-            
+
                                 if let Err(e) = wtr.write_all(record.as_bytes()) {
                                     eprintln!("Failed to write record to file: {}", e);
                                 } else {
@@ -336,25 +364,23 @@ pub async fn middleware() -> io::Result<()> {
                                     online_status.ip
                                 );
                             }
-            
                         }
                         Err(e) => eprintln!("Failed to parse OnlineStatus: {}", e),
                     }
                 } else {
                     eprintln!("Malformed DIR_OF_SERV message: {}", message);
                 }
-            }
-             else if message.starts_with("STATUS:") {
+            } else if message.starts_with("STATUS:") {
                 if let Some(json_payload) = message.strip_prefix("STATUS:") {
                     match serde_json::from_str::<OnlineStatus>(json_payload) {
                         Ok(online_status) => {
                             println!("Received OnlineStatus: {:?}", online_status);
-            
+
                             let file_path = "directory_of_service.csv";
                             let mut is_duplicate = false;
                             let mut needs_update = false;
                             let mut updated_records = Vec::new();
-            
+
                             // Check if the file exists and process existing records
                             if Path::new(file_path).exists() {
                                 if let Ok(content) = fs::read_to_string(file_path) {
@@ -364,12 +390,12 @@ pub async fn middleware() -> io::Result<()> {
                                             updated_records.push(line.to_string());
                                             continue;
                                         }
-            
+
                                         let mut fields: Vec<&str> = line.split(',').collect();
                                         if fields.len() == 3 {
                                             if fields[0] == online_status.ip {
                                                 is_duplicate = true;
-            
+
                                                 // Check if the status has changed
                                                 let existing_status = fields[2] == "true";
                                                 if existing_status != online_status.status {
@@ -388,13 +414,13 @@ pub async fn middleware() -> io::Result<()> {
                                                 }
                                             }
                                         }
-            
+
                                         // Add either the updated or original record to the list
                                         updated_records.push(fields.join(","));
                                     }
                                 }
                             }
-            
+
                             // Write updated data back to the CSV if needed
                             if is_duplicate && needs_update {
                                 let mut file = match OpenOptions::new()
@@ -408,7 +434,7 @@ pub async fn middleware() -> io::Result<()> {
                                         return;
                                     }
                                 };
-            
+
                                 for record in &updated_records {
                                     if let Err(e) = writeln!(file, "{}", record) {
                                         eprintln!("Failed to write record: {}", e);
@@ -419,11 +445,9 @@ pub async fn middleware() -> io::Result<()> {
                                 // Append the new record if it's not a duplicate
                                 let record = format!(
                                     "{},{},{}\n",
-                                    online_status.ip,
-                                    online_status.client_id,
-                                    online_status.status
+                                    online_status.ip, online_status.client_id, online_status.status
                                 );
-            
+
                                 let file_exists = Path::new(file_path).exists();
                                 let mut wtr = match OpenOptions::new()
                                     .create(true)
@@ -436,14 +460,14 @@ pub async fn middleware() -> io::Result<()> {
                                         return;
                                     }
                                 };
-            
+
                                 if !file_exists {
                                     if let Err(e) = wtr.write_all(b"uid,client_id,status\n") {
                                         eprintln!("Failed to write header to file: {}", e);
                                         return;
                                     }
                                 }
-            
+
                                 if let Err(e) = wtr.write_all(record.as_bytes()) {
                                     eprintln!("Failed to write record to file: {}", e);
                                 } else {
@@ -455,9 +479,9 @@ pub async fn middleware() -> io::Result<()> {
                                     online_status.ip
                                 );
                             }
-            
+
                             // Acknowledge the message
-                            let message_to_client = format!("STATUS_ACK:{}", my_address);
+                            let message_to_client = format!("STATUS_ACK:{}", mysocket);
                             socket_election
                                 .lock()
                                 .await
@@ -465,11 +489,12 @@ pub async fn middleware() -> io::Result<()> {
                                 .await
                                 .unwrap();
                             println!("Ack sent to {}", addr);
-            
+
                             // Let the homies know
                             if let Ok(online_status_json) = serde_json::to_string(&online_status) {
                                 for peer in &peers {
-                                    let message_to_send = format!("DIR_OF_SERV:{}", online_status_json);
+                                    let message_to_send =
+                                        format!("DIR_OF_SERV:{}", online_status_json);
                                     socket_election
                                         .lock()
                                         .await
@@ -477,65 +502,104 @@ pub async fn middleware() -> io::Result<()> {
                                         .await
                                         .unwrap();
                                 }
-                            } 
-                            
-                            else {
+                            } else {
                                 eprintln!("Failed to serialize OnlineStatus for broadcasting.");
                             }
-            
+
                             // Receive samples from client only if client is online
                             if online_status.status {
                                 // Convert peers to Vec<String> for the function call
-                                let peers_for_samples: Vec<String> = peers.iter().map(|&peer| peer.to_string()).collect();
-                                if let Err(e) = receive_samples(&socket_election, &online_status.client_id, &addr, &peers_for_samples).await {
+                                let peers_for_samples: Vec<String> =
+                                    peers.iter().map(|&peer| peer.to_string()).collect();
+
+                                if let Err(e) = receive_samples(
+                                    &socket_election,
+                                    &online_status.client_id,
+                                    &addr,
+                                    &peers_for_samples,
+                                )
+                                .await
+                                {
                                     eprintln!("Failed to receive samples: {:?}", e);
                                 }
                             }
-
                         }
                         Err(e) => eprintln!("Failed to parse OnlineStatus: {}", e),
                     }
                 } else {
                     eprintln!("Malformed STATUS message: {}", message);
                 }
-            }
-            else if message.starts_with("Request_DOS") {
+            } else if message.starts_with("Request_DOS") {
                 println!("Received DOS message from {}", addr);
-            
+
                 // Parse the directory of service.csv file and send the info to the client
-                let file = fs::read_to_string("directory_of_service.csv").expect("Unable to read file");
+                let file =
+                    fs::read_to_string("directory_of_service.csv").expect("Unable to read file");
                 let dos_message = format!("DOS:{}", file);
-                socket_election.lock().await.send_to(dos_message.as_bytes(), addr).await.unwrap();
-            
+                socket_election
+                    .lock()
+                    .await
+                    .send_to(dos_message.as_bytes(), addr)
+                    .await
+                    .unwrap();
+
                 // Now send all available samples
                 let samples_dir = "samples";
                 if !Path::new(samples_dir).exists() {
                     // No samples directory exists
                     let no_samples_message = "NO_SAMPLES";
-                    socket_election.lock().await.send_to(no_samples_message.as_bytes(), addr).await.unwrap();
+                    socket_election
+                        .lock()
+                        .await
+                        .send_to(no_samples_message.as_bytes(), addr)
+                        .await
+                        .unwrap();
                     println!("Notified client that no samples are available.");
                 } else {
                     // Iterate through all folders and files in `samples/`
-                    for entry in fs::read_dir(samples_dir).expect("Failed to read samples directory") {
+                    for entry in
+                        fs::read_dir(samples_dir).expect("Failed to read samples directory")
+                    {
                         if let Ok(client_folder) = entry {
                             let client_folder_path = client_folder.path();
                             if client_folder_path.is_dir() {
-                                let client_id = client_folder.file_name().to_string_lossy().to_string();
-            
-                                for sample in fs::read_dir(client_folder_path).expect("Failed to read client folder") {
+                                let client_id =
+                                    client_folder.file_name().to_string_lossy().to_string();
+
+                                for sample in fs::read_dir(client_folder_path)
+                                    .expect("Failed to read client folder")
+                                {
                                     if let Ok(sample_file) = sample {
                                         let sample_path = sample_file.path();
                                         if sample_path.is_file() {
-                                            let sample_name = sample_file.file_name().to_string_lossy().to_string();
-            
+                                            let sample_name = sample_file
+                                                .file_name()
+                                                .to_string_lossy()
+                                                .to_string();
+
                                             // Send metadata first
-                                            let metadata_message = format!("SAMPLE:{}:{}", client_id, sample_name);
-                                            socket_election.lock().await.send_to(metadata_message.as_bytes(), addr).await.unwrap();
-                                            println!("Sent metadata for sample {}:{}", client_id, sample_name);
-            
+                                            let metadata_message =
+                                                format!("SAMPLE:{}:{}", client_id, sample_name);
+                                            socket_election
+                                                .lock()
+                                                .await
+                                                .send_to(metadata_message.as_bytes(), addr)
+                                                .await
+                                                .unwrap();
+                                            println!(
+                                                "Sent metadata for sample {}:{}",
+                                                client_id, sample_name
+                                            );
+
                                             // Send the file contents
-                                            let sample_data = fs::read(&sample_path).expect("Failed to read sample file");
-                                            socket_election.lock().await.send_to(&sample_data, addr).await.unwrap();
+                                            let sample_data = fs::read(&sample_path)
+                                                .expect("Failed to read sample file");
+                                            socket_election
+                                                .lock()
+                                                .await
+                                                .send_to(&sample_data, addr)
+                                                .await
+                                                .unwrap();
                                             println!("Sent file {} to {}", sample_name, addr);
                                         }
                                     }
@@ -543,40 +607,45 @@ pub async fn middleware() -> io::Result<()> {
                             }
                         }
                     }
-            
+
                     // Notify the client that all samples are sent
                     let done_message = "SAMPLES_DONE";
-                    socket_election.lock().await.send_to(done_message.as_bytes(), addr).await.unwrap();
+                    socket_election
+                        .lock()
+                        .await
+                        .send_to(done_message.as_bytes(), addr)
+                        .await
+                        .unwrap();
                     println!("Notified client that all samples are sent.");
                 }
-            }
-
-            else if message.starts_with("SAMPLE_SYNC:") {
+            } else if message.starts_with("SAMPLE_SYNC:") {
                 if let Some(metadata) = message.strip_prefix("SAMPLE_SYNC:") {
                     let parts: Vec<&str> = metadata.split(':').collect();
                     if parts.len() < 2 {
                         eprintln!("Invalid SAMPLE_SYNC message: {}", metadata);
                         continue;
                     }
-            
+
                     let client_id = parts[0];
                     let image_name = parts[1];
-            
+
                     // Create the folder for this client
                     let client_samples_dir = format!("samples/{}", client_id);
-                    std::fs::create_dir_all(&client_samples_dir).expect("Failed to create client samples directory");
-            
+                    std::fs::create_dir_all(&client_samples_dir)
+                        .expect("Failed to create client samples directory");
+
                     // Receive the image data
                     let mut buffer = [0u8; 4096];
-                    let (size, addr) = match socket_election.lock().await.recv_from(&mut buffer).await {
-                        Ok(result) => result,
-                        Err(e) => {
-                            eprintln!("Failed to receive image data: {:?}", e);
-                            continue;
-                        }
-                    };
+                    let (size, addr) =
+                        match socket_election.lock().await.recv_from(&mut buffer).await {
+                            Ok(result) => result,
+                            Err(e) => {
+                                eprintln!("Failed to receive image data: {:?}", e);
+                                continue;
+                            }
+                        };
                     println!("Received image data from {}", addr);
-            
+
                     let image_path = format!("{}/{}.jpg", client_samples_dir, image_name);
                     if let Err(e) = std::fs::write(&image_path, &buffer[..size]) {
                         eprintln!("Failed to write image data: {:?}", e);
@@ -584,11 +653,100 @@ pub async fn middleware() -> io::Result<()> {
                     }
                     println!("Stored image: {}", image_path);
                 }
+            } else if message.starts_with("Access_Control:") {
+                // Extract the message content after "Access_Control:"
+                let control_data = message
+                    .strip_prefix("Access_Control:")
+                    .unwrap_or("")
+                    .to_string();
+
+                // Split the message into components (client_id, image_part1, image_part2, views)
+                let parts: Vec<&str> = control_data.split('_').collect();
+                if parts.len() == 4 {
+                    let client_id = parts[0].to_string();
+                    let image_part1 = parts[1].to_string();
+                    let image_part2 = parts[2].to_string();
+                    let views = parts[3].to_string(); // The new number of views
+
+                    println!("Received Access Control request for client ID: {}, image ID: {}_{} (combined), new views: {}", client_id, image_part1, image_part2, views);
+
+                    // Store the values in variables for further use
+                    let stored_client_id = client_id;
+                    let stored_image_id = format!("{}_{}", image_part1, image_part2); // Combine the two parts of the image ID
+                    let stored_views = views;
+
+                    // Print the stored variables for debugging
+                    println!(
+                        "Stored client_id: {}, image_id: {}, views: {}",
+                        stored_client_id, stored_image_id, stored_views
+                    );
+
+                    // Map client ID to IP address from directory of service
+                    let file_path = "directory_of_service.csv";
+                    let mut client_ip = String::new();
+                    let mut client_status = false;
+
+                    if Path::new(file_path).exists() {
+                        if let Ok(content) = fs::read_to_string(file_path) {
+                            for line in content.lines() {
+                                // Skip the header
+                                if line.starts_with("uid,client_id,status") {
+                                    continue;
+                                }
+
+                                let fields: Vec<&str> = line.split(',').collect();
+                                if fields.len() == 3 {
+                                    if fields[1] == stored_client_id {
+                                        client_ip = fields[0].to_string();
+                                        client_status = fields[2] == "true";
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // Check if the client is online
+                    if client_ip.is_empty() {
+                        println!("Client ID not found in directory of service.");
+                    } else if !client_status {
+                        println!("Client ID is offline.");
+                    } else {
+                        println!("Client ID is online at IP: {}", client_ip);
+
+                        // Send the IP address back to the client
+                        let message_to_client = format!("Access_Control_ACK:{}", client_ip);
+                        socket_election
+                            .lock()
+                            .await
+                            .send_to(message_to_client.as_bytes(), addr)
+                            .await
+                            .unwrap();
+                        println!("Access control ACK sent to {}", addr);
+
+                        // Send control update to target client
+                        let update_message = format!(
+                            "CONTROL_UPDATE:{}:{}:{}",
+                            stored_client_id, stored_image_id, stored_views
+                        );
+                        socket_election
+                            .lock()
+                            .await
+                            .send_to(update_message.as_bytes(), client_ip.clone())
+                            .await
+                            .unwrap();
+                        println!("Control update sent to client at IP: {}", client_ip);
+                    }
+
+                    // Now, you can add your access control logic here:
+                    // For example, check the `stored_client_id`, `stored_image_id`, and update the image's view count
+                } else {
+                    println!("Invalid access control format received.");
+                }
             }
-            
-                        
         }
     });
+
     let failure_socket_clone = Arc::clone(&failure_socket);
     tokio::spawn(async move {
         let mut buffer = [0u8; 2048];
@@ -775,10 +933,12 @@ pub async fn middleware() -> io::Result<()> {
             let mut ack_buffer = [0u8; 1024];
             let max_retries = 5;
 
-            if client_addr.to_string() == "127.0.0.1:9080" {
-                client = "127.0.0.1:2005";
-            } else if client_addr.to_string()=="127.0.0.1:7005"{
-                client ="127.0.0.1:7001";
+            let mut client = String::new();
+
+            if client_addr.to_string() == format!("{}:9080", client1) {
+                client = format!("{}:2005", client1);
+            } else if client_addr.to_string() == format!("{}:7005", client2) {
+                client = format!("{}:7001", client2);
             }
 
             for i in 0..total_chunks {
@@ -793,7 +953,7 @@ pub async fn middleware() -> io::Result<()> {
                 socket6
                     .lock()
                     .await
-                    .send_to(&chunk, client)
+                    .send_to(&chunk, &client)
                     .await
                     .expect("Failed to send encrypted image chunk");
                 println!("Sent encrypted chunk {} of {}", i + 1, total_chunks);
@@ -833,7 +993,7 @@ pub async fn middleware() -> io::Result<()> {
                             socket6
                                 .lock()
                                 .await
-                                .send_to(&chunk, client)
+                                .send_to(&chunk, &client)
                                 .await
                                 .expect("Failed to resend chunk");
                         }
@@ -850,7 +1010,7 @@ pub async fn middleware() -> io::Result<()> {
                             socket6
                                 .lock()
                                 .await
-                                .send_to(&chunk, client)
+                                .send_to(&chunk, &client)
                                 .await
                                 .expect("Failed to resend chunk");
                         }
@@ -862,7 +1022,7 @@ pub async fn middleware() -> io::Result<()> {
             socket6
                 .lock()
                 .await
-                .send_to(b"END", client)
+                .send_to(b"END", &client)
                 .await
                 .expect("Failed to send END message");
             println!("Encrypted image transmission completed.");

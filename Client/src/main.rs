@@ -12,13 +12,13 @@ use std::fs::OpenOptions;
 use std::io::{self, Cursor, Write};
 use std::net::SocketAddr;
 use std::path::Path;
+use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::net::UdpSocket;
 use tokio::signal;
 use tokio::time;
 use tokio::time::{sleep, timeout, Duration};
-use std::process::Command;
 mod middleware;
 use middleware::middleware;
 use middleware::request_image_by_id;
@@ -233,9 +233,7 @@ pub async fn main() -> io::Result<()> {
                     &info.client_id,
                 )
                 .await?;
-            } 
-            
-            else if input.trim().eq_ignore_ascii_case("e")
+            } else if input.trim().eq_ignore_ascii_case("e")
                 || input.trim().eq_ignore_ascii_case("E")
             {
                 println!("Exiting...");
@@ -251,8 +249,7 @@ pub async fn main() -> io::Result<()> {
                     .send_to(&message_to_send.as_bytes(), assistant)
                     .await?;
                 break;
-            } 
-            else if input.trim().eq_ignore_ascii_case("d")
+            } else if input.trim().eq_ignore_ascii_case("d")
                 || input.trim().eq_ignore_ascii_case("D")
             {
                 // Request DoS and samples
@@ -334,10 +331,9 @@ pub async fn main() -> io::Result<()> {
                 if !samples_received {
                     println!("No samples were transmitted during the DoS request.");
                 }
-            } 
-
-            else if (input.trim().eq_ignore_ascii_case("v") || input.trim().eq_ignore_ascii_case("V")){
-                
+            }else if input.trim().eq_ignore_ascii_case("v")
+                || input.trim().eq_ignore_ascii_case("V")
+            {
                 // receive input for image id
                 println!("Enter image ID to view: ");
                 let mut image_id = String::new();
@@ -345,15 +341,12 @@ pub async fn main() -> io::Result<()> {
                     .read_line(&mut image_id)
                     .expect("Failed to read image ID");
 
-                // go into received_images directory
-
                 // Open the image
                 println!("Opening image...");
                 let views_path = "views_count";
                 let file_path = format!("{}/{}_views.txt", views_path, image_id.trim());
-                let decrypted_path  = "decrypted_image.png";
-                let views = fs::read_to_string(&file_path
-                ).expect("Failed to read views file");
+                let decrypted_path = "decrypted_image.png";
+                let views = fs::read_to_string(&file_path).expect("Failed to read views file");
 
                 // Check for platform and run the appropriate command
                 if views == "0" {
@@ -362,72 +355,90 @@ pub async fn main() -> io::Result<()> {
                 } else {
                     let received_images_dir = "received_images";
 
-                // if no received_images directory exists, raise an error
+                    // if no received_images directory exists, raise an error
 
-                if !Path::new(received_images_dir).exists() {
-                    eprintln!("No received images directory found. Please request images first.");
-                    continue;
+                    if !Path::new(received_images_dir).exists() {
+                        eprintln!(
+                            "No received images directory found. Please request images first."
+                        );
+                        continue;
+                    }
+
+                    // get the image path
+                    let image_path = format!("{}/{}.png", received_images_dir, image_id.trim());
+
+                    // check if the image exists
+                    if !Path::new(&image_path).exists() {
+                        eprintln!("Image not found. Please request the image first.");
+                        continue;
+                    }
+
+                    // Decrypt the image
+                    if let Err(e) = middleware::decrypt(image_path.clone()).await {
+                        eprintln!("Failed to decrypt image: {}", e);
+                        continue;
+                    }
+                    if cfg!(target_os = "windows") {
+                        Command::new("cmd")
+                            .arg("/C")
+                            .arg(format!("start {}", decrypted_path))
+                            .spawn()
+                            .expect("Failed to open image");
+                    }
+                    // MacOS uses 'open'
+                    else if cfg!(target_os = "macos") {
+                        Command::new("open")
+                            .arg(decrypted_path)
+                            .spawn()
+                            .expect("Failed to open image");
+                    }
+                    // Linux typically uses 'xdg-open'
+                    else if cfg!(target_os = "linux") {
+                        Command::new("xdg-open")
+                            .arg(decrypted_path)
+                            .spawn()
+                            .expect("Failed to open image");
+                    } else {
+                        eprintln!("Unsupported platform for image viewer");
+                    }
+
+                    // Check if the views file exists if it doesn't, Raise an error
+                    if !Path::new(&file_path).exists() {
+                        eprintln!("Views count file not found. Please request the image first.");
+                        continue;
+                    }
+
+                    // Decrement the views count
+
+                    let views: i32 = views.trim().parse().expect("Failed to parse views count");
+                    let new_views = views - 1;
+
+                    // Write the new views count
+                    fs::write(&file_path, new_views.to_string())
+                        .expect("Failed to write new views count");
+
+                    // delete temporary decrypted image
+                    // fs::remove_file(decrypted_path).expect("Failed to delete decrypted image");
                 }
+            } 
 
-                // get the image path
-                let image_path = format!("{}/{}.png", received_images_dir, image_id.trim());
-
-                // check if the image exists
-                if !Path::new(&image_path).exists() {
-                    eprintln!("Image not found. Please request the image first.");
-                    continue;
-                }
-
-                // Decrypt the image
-                if let Err(e) = middleware::decrypt(image_path.clone()).await {
-                    eprintln!("Failed to decrypt image: {}", e);
-                    continue;
-                }
-                if cfg!(target_os = "windows") {
-                    Command::new("cmd")
-                        .arg("/C")
-                        .arg(format!("start {}", decrypted_path))
-                        .spawn()
-                        .expect("Failed to open image");
-                } 
-                // MacOS uses 'open'
-                else if cfg!(target_os = "macos") {
-                    Command::new("open")
-                        .arg(decrypted_path)
-                        .spawn()
-                        .expect("Failed to open image");
-                } 
-                // Linux typically uses 'xdg-open'
-                else if cfg!(target_os = "linux") {
-                    Command::new("xdg-open")
-                        .arg(decrypted_path)
-                        .spawn()
-                        .expect("Failed to open image");
-                }                
-                 else {
-                    eprintln!("Unsupported platform for image viewer");
-                }
-
-                // Check if the views file exists if it doesn't, Raise an error
-                if !Path::new(&file_path).exists() {
-                    eprintln!("Views count file not found. Please request the image first.");
-                    continue;
-                }
-               
-
-                // Decrement the views count
-
-                let views: i32 = views.trim().parse().expect("Failed to parse views count");
-                let new_views = views - 1;
-
-                // Write the new views count
-                fs::write(&file_path, new_views.to_string()).expect("Failed to write new views count");
-
-                // delete temporary decrypted image
-                // fs::remove_file(decrypted_path).expect("Failed to delete decrypted image");
+            else if (input.trim().eq_ignore_ascii_case("c") || input.trim().eq_ignore_ascii_case("C")) {
+                // Request for control access
+                println!("Enter the client ID, image ID (in two parts), and new view count (format: client_id_image_id_part1_image_id_part2_new_views), e.g., 5_6_23_2:");
+                let mut access_input = String::new();
+                io::stdin()
+                    .read_line(&mut access_input)
+                    .expect("Failed to read access input");
+            
+                // Clean up the input (remove any leading/trailing whitespace)
+                let access_input = access_input.trim();
+            
+                // Send the formatted message to the server
+                let message = format!("Access_Control:{}", access_input);
+                socket.send_to(message.as_bytes(), assistant).await?;
+                println!("Sent access control request: {}", access_input);
             }
-        }
-
+             
             else {
                 println!("Invalid input. Please try again.");
             }

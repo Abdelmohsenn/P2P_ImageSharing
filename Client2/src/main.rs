@@ -428,6 +428,23 @@ pub async fn main() -> io::Result<()> {
             }
         }
 
+        else if (input.trim().eq_ignore_ascii_case("c") || input.trim().eq_ignore_ascii_case("C")) {
+            // Request for control access
+            println!("Enter the client ID, image ID (in two parts), and new view count (format: client_id_image_id_part1_image_id_part2_new_views), e.g., 5_6_23_2:");
+            let mut access_input = String::new();
+            io::stdin()
+                .read_line(&mut access_input)
+                .expect("Failed to read access input");
+        
+            // Clean up the input (remove any leading/trailing whitespace)
+            let access_input = access_input.trim();
+        
+            // Send the formatted message to the server
+            let message = format!("Access_Control:{}", access_input);
+            socket.send_to(message.as_bytes(), assistant).await?;
+            println!("Sent access control request: {}", access_input);
+        }
+
             else {
                 println!("Invalid input. Please try again.");
             }

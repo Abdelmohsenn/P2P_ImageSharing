@@ -217,7 +217,7 @@ pub async fn middleware() -> io::Result<()> {
                                 socketsendipback
                                     .lock()
                                     .await
-                                    .send_to(message_to_client.as_bytes(), "127.0.0.1:9080")
+                                    .send_to(message_to_client.as_bytes(),format!("{}:9080",client1))
                                     .await
                                     .unwrap();
                                 } else if addr.to_string() == client_address2{
@@ -225,7 +225,7 @@ pub async fn middleware() -> io::Result<()> {
                                     socketsendipback
                                     .lock()
                                     .await
-                                    .send_to(message_to_client.as_bytes(), "127.0.0.1:7005")
+                                    .send_to(message_to_client.as_bytes(), format!("{}:7005",client2))
                                     .await
                                     .unwrap();
                                 }
@@ -596,6 +596,90 @@ pub async fn middleware() -> io::Result<()> {
                         continue;
                     }
                     println!("Stored image: {}", image_path);
+                }
+            }
+
+            else if message.starts_with("Access_Control:") {
+                // Extract the message content after "Access_Control:"
+                let control_data = message.strip_prefix("Access_Control:").unwrap_or("").to_string();
+            
+                // Split the message into components (client_id, image_part1, image_part2, views)
+                let parts: Vec<&str> = control_data.split('_').collect();
+                if parts.len() == 4 {
+                    let client_id = parts[0].to_string();
+                    let image_part1 = parts[1].to_string();
+                    let image_part2 = parts[2].to_string();
+                    let views = parts[3].to_string();  // The new number of views
+            
+                    println!("Received Access Control request for client ID: {}, image ID: {}_{} (combined), new views: {}", client_id, image_part1, image_part2, views);
+            
+                    // Store the values in variables for further use
+                    let stored_client_id = client_id;
+                    let stored_image_id = format!("{}_{}", image_part1, image_part2);  // Combine the two parts of the image ID
+                    let stored_views = views;
+            
+                    // Print the stored variables for debugging
+                    println!("Stored client_id: {}, image_id: {}, views: {}", stored_client_id, stored_image_id, stored_views);
+            
+                    // Map client ID to IP address from directory of service
+                    let file_path = "directory_of_service.csv";
+                    let mut client_ip = String::new();
+                    let mut client_status = false;
+            
+                    if Path::new(file_path).exists() {
+                        if let Ok(content) = fs::read_to_string(file_path) {
+                            for line in content.lines() {
+                                // Skip the header
+                                if line.starts_with("uid,client_id,status") {
+                                    continue;
+                                }
+            
+                                let fields: Vec<&str> = line.split(',').collect();
+                                if fields.len() == 3 {
+                                    if fields[1] == stored_client_id {
+                                        client_ip = fields[0].to_string();
+                                        client_status = fields[2] == "true";
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                    }
+            
+                    // Check if the client is online
+                    if client_ip.is_empty() {
+                        println!("Client ID not found in directory of service.");
+                    } else if !client_status {
+                        println!("Client ID is offline.");
+                    } else {
+                        println!("Client ID is online at IP: {}", client_ip);
+            
+                        // Send the IP address back to the client
+                        let message_to_client = format!("Access_Control_ACK:{}", client_ip);
+                        socket_election
+                            .lock()
+                            .await
+                            .send_to(message_to_client.as_bytes(), addr)
+                            .await
+                            .unwrap();
+                        println!("Access control ACK sent to {}", addr);
+
+                        // Send control update to target client
+                        let update_message = format!("CONTROL_UPDATE:{}:{}:{}", stored_client_id, stored_image_id, stored_views);
+                        socket_election
+                            .lock()
+                            .await
+                            .send_to(update_message.as_bytes(), client_ip.clone())
+                            .await
+                            .unwrap();
+                        println!("Control update sent to client at IP: {}", client_ip);
+
+                    }
+            
+                    // Now, you can add your access control logic here:
+                    // For example, check the `stored_client_id`, `stored_image_id`, and update the image's view count
+                } else {
+                    println!("Invalid access control format received.");
                 }
             }
             

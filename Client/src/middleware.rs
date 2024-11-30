@@ -626,6 +626,46 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                     println!("Invalid request format: {}", received_message);
                 }
             }
+            else if received_message.starts_with("CONTROL_UPDATE") {
+
+                let update_data = received_message.strip_prefix("CONTROL_UPDATE:").unwrap_or("").to_string();
+                let parts: Vec<&str> = update_data.split(':').collect();
+                
+                if parts.len() == 3 {
+                    let client_id = parts[0].to_string();
+                    let image_id = parts[1].to_string();
+                    let views = parts[2].to_string(); 
+                    
+                    println!("Received control update - Client ID: {}, Image ID: {}, New Views: {}", client_id, image_id, views);
+            
+                    let stored_client_id = client_id;
+                    let stored_image_id = image_id;
+                    let stored_views = views;
+            
+                    // access received_images folder and update the views count
+                    let views_dir = "views_count";
+                    let views_file = format!("{}/{}_views.txt", views_dir, stored_image_id);
+                    
+                    // Open the file for writing and truncate (overwrite) its contents
+                    let mut file = OpenOptions::new()
+                        .write(true)
+                        .truncate(true)  // This ensures the file is overwritten, not appended
+                        .open(views_file)
+                        .expect("Failed to open file");
+                    
+                    // Write the new view count to the file
+                    file.write_all(stored_views.as_bytes())
+                        .expect("Failed to write to file");
+            
+                    // For now, we print them or store them for future use
+                    println!("Stored client_id: {}, image_id: {}, views: {}", stored_client_id, stored_image_id, stored_views);
+                }
+                 
+                else {
+                    println!("Received invalid CONTROL_UPDATE format.");
+                }
+            }
+            
         }
     });
     Ok(())
