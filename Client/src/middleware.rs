@@ -521,11 +521,11 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                     middleware(&socket6, image_id, &client_election_and_image, &requester_ip).await;
 
                     // Check if the image exists in the samples directory
-                    let image_path = format!("encrypted_image_from_server.png"); // images/5
+                    let image_path = format!("encrypted_image_from_server.png");
                     if Path::new(&image_path).exists() {
                         match fs::read(&image_path) {
                             Ok(image_data) => {
-                                let chunk_size = 1024; // Chunk size for transmission
+                                let chunk_size = 1024;
                                 let total_chunks = (image_data.len() + chunk_size - 1) / chunk_size;
 
                                 // Send the total number of chunks first
@@ -535,20 +535,22 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                                     .await
                                     .unwrap_or_else(|e| {
                                         eprintln!(
-                                        "Failed to send total chunks message for image '{}': {:?}",
-                                        image_id, e
-                                    );
+                                            "Failed to send total chunks message for image '{}': {:?}",
+                                            image_id, e
+                                        );
                                         0
                                     });
 
-                                // Send the image data in chunks with ACK/NACK handling
-                                for (i, chunk) in image_data.chunks(chunk_size).enumerate() {
+                                let mut transfer_successful = true;
+                                'chunk_loop: for (i, chunk) in image_data.chunks(chunk_size).enumerate() {
                                     let mut message = Vec::new();
-                                    message.extend_from_slice(&(i as u32).to_be_bytes()); // Add chunk number
-                                    message.extend_from_slice(chunk); // Add chunk data
+                                    message.extend_from_slice(&(i as u32).to_be_bytes());
+                                    message.extend_from_slice(chunk);
 
-                                    loop {
-                                        // Send the chunk
+                                    let mut retries = 0;
+                                    const MAX_RETRIES: u32 = 2;
+
+                                    while retries <= MAX_RETRIES {
                                         socket.send_to(&message, peer_addr).await.unwrap_or_else(
                                             |e| {
                                                 eprintln!(
@@ -560,14 +562,15 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                                         );
 
                                         println!(
-                                            "Sent chunk {}/{} of image '{}' to {}",
+                                            "Sent chunk {}/{} of image '{}' to {} (attempt {}/{})",
                                             i + 1,
                                             total_chunks,
                                             image_id,
-                                            peer_addr
+                                            peer_addr,
+                                            retries + 1,
+                                            MAX_RETRIES + 1
                                         );
 
-                                        // Wait for ACK/NACK or timeout
                                         let mut ack_buffer = [0u8; 128];
                                         match tokio::time::timeout(
                                             std::time::Duration::from_secs(2),
@@ -580,37 +583,74 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                                                     String::from_utf8_lossy(&ack_buffer[..amt]);
                                                 if response == format!("ACK:{}", i) {
                                                     println!("Received ACK for chunk {}", i);
-                                                    break; // Move to the next chunk
+                                                    continue 'chunk_loop;
                                                 } else if response == format!("NACK:{}", i) {
                                                     println!(
-                                                        "Received NACK for chunk {}, resending...",
-                                                        i
+                                                        "Received NACK for chunk {}, retry {}/{}",
+                                                        i, retries + 1, MAX_RETRIES + 1
                                                     );
-                                                    continue; // Resend the chunk
+                                                    retries += 1;
+                                                    if retries > MAX_RETRIES {
+                                                        eprintln!("Max retries exceeded for chunk {}", i);
+                                                        transfer_successful = false;
+                                                        break 'chunk_loop;
+                                                    }
+                                                    continue;
                                                 } else {
                                                     eprintln!("Unexpected response: {}", response);
                                                 }
                                             }
                                             Ok(Err(e)) => {
                                                 eprintln!("Error receiving ACK/NACK: {:?}", e);
-                                                continue; // Retry sending the chunk
+                                                retries += 1;
+                                                if retries > MAX_RETRIES {
+                                                    eprintln!("Max retries exceeded for chunk {}", i);
+                                                    transfer_successful = false;
+                                                    break 'chunk_loop;
+                                                }
+                                                continue;
                                             }
                                             Err(_) => {
-                                                println!("Timeout waiting for ACK/NACK for chunk {}, resending...", i);
-                                                continue; // Retry sending the chunk
+                                                println!(
+                                                    "Timeout waiting for ACK/NACK for chunk {}, retry {}/{}",
+                                                    i, retries + 1, MAX_RETRIES + 1
+                                                );
+                                                retries += 1;
+                                                if retries > MAX_RETRIES {
+                                                    eprintln!("Max retries exceeded for chunk {}", i);
+                                                    transfer_successful = false;
+                                                    break 'chunk_loop;
+                                                }
+                                                continue;
                                             }
                                         }
                                     }
+
+                                    if retries > MAX_RETRIES {
+                                        eprintln!("Failed to send chunk {} after {} retries", i, MAX_RETRIES);
+                                        transfer_successful = false;
+                                        break;
+                                    }
                                 }
 
-                                println!("Completed sending image '{}' to {}", image_id, peer_addr);
+                                if transfer_successful {
+                                    println!("Successfully completed sending image '{}' to {}", image_id, peer_addr);
+                                } else {
+                                    eprintln!("Failed to complete image transfer for '{}' to {}", image_id, peer_addr);
+                                    
+                                    // Optionally notify peer about transfer failure
+                                    let failure_message = format!("TRANSFER_FAILED:{}", image_id);
+                                    socket.send_to(failure_message.as_bytes(), peer_addr).await.unwrap_or_else(|e| {
+                                        eprintln!("Failed to send transfer failure notification: {:?}", e);
+                                        0
+                                    });
+                                }
                             }
                             Err(e) => {
                                 eprintln!("Failed to read image '{}': {:?}", image_id, e);
                             }
                         }
                     } else {
-                        // Notify the peer that the image doesn't exist
                         let error_message = format!("IMAGE_NOT_FOUND:{}", image_id);
                         socket
                             .send_to(error_message.as_bytes(), peer_addr)
