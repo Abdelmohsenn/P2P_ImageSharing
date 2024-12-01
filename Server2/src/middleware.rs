@@ -15,7 +15,7 @@ use steganography::encoder::*;
 use steganography::util::file_as_dynamic_image;
 use tokio::fs::File;
 use std::net::SocketAddr;
-use tokio::io;
+use tokio::io::{self, AsyncWriteExt};
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, timeout, Duration};
@@ -236,7 +236,8 @@ pub async fn middleware() -> io::Result<()> {
                     }
                     Err(e) => eprintln!("Election failed: {:?}", e),
                 }
-            } else if message.starts_with("DIR_OF_SERV") {
+            } 
+            else if message.starts_with("DIR_OF_SERV") {
                 // Extract the JSON payload from the message
                 if let Some(json_payload) = message.strip_prefix("DIR_OF_SERV:") {
                     match serde_json::from_str::<OnlineStatus>(json_payload) {
@@ -349,6 +350,44 @@ pub async fn middleware() -> io::Result<()> {
                                 );
                             }
             
+                            // Remove records for this client_id from the offline access control requests file
+                            let offline_requests_file = "offline_access_control_requests.csv";
+                            if Path::new(offline_requests_file).exists() {
+                                if let Ok(content) = fs::read_to_string(offline_requests_file) {
+                                    let mut updated_requests = Vec::new();
+                                    for line in content.lines() {
+                                        if line.starts_with("client_id,image_id,views") {
+                                            updated_requests.push(line.to_string()); // Retain header
+                                            continue;
+                                        }
+            
+                                        let parts: Vec<&str> = line.split(',').collect();
+                                        if parts.len() == 3 && parts[0] != online_status.client_id {
+                                            updated_requests.push(line.to_string()); // Retain non-matching entries
+                                        } else if parts.len() == 3 {
+                                            println!(
+                                                "Removing offline request for client_id={} from offline requests file.",
+                                                parts[0]
+                                            );
+                                        }
+                                    }
+            
+                                    // Rewrite the file with the updated requests
+                                    let mut file = File::create(offline_requests_file)
+                                        .await
+                                        .expect("Failed to recreate offline requests file");
+                                    for request in updated_requests {
+                                        file.write_all(format!("{}\n", request).as_bytes())
+                                            .await
+                                            .expect("Failed to write to offline requests file");
+                                    }
+            
+                                    println!(
+                                        "Offline requests file updated after processing client_id={}.",
+                                        online_status.client_id
+                                    );
+                                }
+                            }
                         }
                         Err(e) => eprintln!("Failed to parse OnlineStatus: {}", e),
                     }
@@ -356,17 +395,62 @@ pub async fn middleware() -> io::Result<()> {
                     eprintln!("Malformed DIR_OF_SERV message: {}", message);
                 }
             }
-             else if message.starts_with("STATUS:") {
+            
+
+            else if message.starts_with("OFFLINE_WANTED:") {
+                let offline_data = message.strip_prefix("OFFLINE_WANTED:").unwrap_or("").to_string();
+                let parts: Vec<&str> = offline_data.split(':').collect();
+            
+                if parts.len() == 3 {
+                    let client_id = parts[0].to_string();
+                    let image_id = parts[1].to_string();
+                    let views = parts[2].to_string();
+            
+                    println!(
+                        "Received OFFLINE_WANTED - Client ID: {}, Image ID: {}, Views: {}",
+                        client_id, image_id, views
+                    );
+            
+                    // Append the received request to the offline requests CSV
+                    let offline_requests_file = "offline_access_control_requests.csv";
+                    if !Path::new(offline_requests_file).exists() {
+                        let mut file = File::create(offline_requests_file)
+                            .await
+                            .expect("Failed to create offline requests file");
+                        file.write_all(b"client_id,image_id,views\n")
+                            .await
+                            .expect("Failed to write header to offline requests file");
+                    }
+            
+                    let mut file = OpenOptions::new()
+                        .write(true)
+                        .append(true)
+                        .open(offline_requests_file)
+                        .expect("Failed to open offline requests file for appending");
+            
+                    writeln!(file, "{},{},{}", client_id, image_id, views)
+                        .expect("Failed to write to offline requests file");
+            
+                    println!(
+                        "Stored OFFLINE_WANTED in file - Client ID: {}, Image ID: {}, Views: {}",
+                        client_id, image_id, views
+                    );
+                } else {
+                    println!("Invalid OFFLINE_WANTED format: {}", offline_data);
+                }
+            }
+
+            else if message.starts_with("STATUS:") {
                 if let Some(json_payload) = message.strip_prefix("STATUS:") {
                     match serde_json::from_str::<OnlineStatus>(json_payload) {
                         Ok(online_status) => {
                             println!("Received OnlineStatus: {:?}", online_status);
-            
+
                             let file_path = "directory_of_service.csv";
                             let mut is_duplicate = false;
                             let mut needs_update = false;
                             let mut updated_records = Vec::new();
-            
+
                             // Check if the file exists and process existing records
                             if Path::new(file_path).exists() {
                                 if let Ok(content) = fs::read_to_string(file_path) {
@@ -376,12 +460,12 @@ pub async fn middleware() -> io::Result<()> {
                                             updated_records.push(line.to_string());
                                             continue;
                                         }
-            
+
                                         let mut fields: Vec<&str> = line.split(',').collect();
                                         if fields.len() == 3 {
                                             if fields[0] == online_status.ip {
                                                 is_duplicate = true;
-            
+
                                                 // Check if the status has changed
                                                 let existing_status = fields[2] == "true";
                                                 if existing_status != online_status.status {
@@ -400,13 +484,13 @@ pub async fn middleware() -> io::Result<()> {
                                                 }
                                             }
                                         }
-            
+
                                         // Add either the updated or original record to the list
                                         updated_records.push(fields.join(","));
                                     }
                                 }
                             }
-            
+
                             // Write updated data back to the CSV if needed
                             if is_duplicate && needs_update {
                                 let mut file = match OpenOptions::new()
@@ -420,7 +504,7 @@ pub async fn middleware() -> io::Result<()> {
                                         return;
                                     }
                                 };
-            
+
                                 for record in &updated_records {
                                     if let Err(e) = writeln!(file, "{}", record) {
                                         eprintln!("Failed to write record: {}", e);
@@ -435,7 +519,7 @@ pub async fn middleware() -> io::Result<()> {
                                     online_status.client_id,
                                     online_status.status
                                 );
-            
+
                                 let file_exists = Path::new(file_path).exists();
                                 let mut wtr = match OpenOptions::new()
                                     .create(true)
@@ -448,14 +532,14 @@ pub async fn middleware() -> io::Result<()> {
                                         return;
                                     }
                                 };
-            
+
                                 if !file_exists {
                                     if let Err(e) = wtr.write_all(b"uid,client_id,status\n") {
                                         eprintln!("Failed to write header to file: {}", e);
                                         return;
                                     }
                                 }
-            
+
                                 if let Err(e) = wtr.write_all(record.as_bytes()) {
                                     eprintln!("Failed to write record to file: {}", e);
                                 } else {
@@ -467,7 +551,7 @@ pub async fn middleware() -> io::Result<()> {
                                     online_status.ip
                                 );
                             }
-            
+
                             // Acknowledge the message
                             let message_to_client = format!("STATUS_ACK:{}", mysocket);
                             socket_election
@@ -477,7 +561,7 @@ pub async fn middleware() -> io::Result<()> {
                                 .await
                                 .unwrap();
                             println!("Ack sent to {}", addr);
-            
+
                             // Let the homies know
                             if let Ok(online_status_json) = serde_json::to_string(&online_status) {
                                 for peer in &peers {
@@ -489,22 +573,108 @@ pub async fn middleware() -> io::Result<()> {
                                         .await
                                         .unwrap();
                                 }
-                            }
-
-                            else {
+                            } else {
                                 eprintln!("Failed to serialize OnlineStatus for broadcasting.");
                             }
-            
-                            // Receive samples from client only if client is online
+
+                            // Process offline requests if the client is online
                             if online_status.status {
-                                // Convert peers to Vec<String> for the function call
-                                let peers_for_samples: Vec<String> = peers.iter().map(|&peer| peer.to_string()).collect();
-                            
-                                if let Err(e) = receive_samples(&socket_election, &online_status.client_id, &addr, &peers_for_samples).await {
-                                    eprintln!("Failed to receive samples: {:?}", e);
+                                let offline_requests_file = "offline_access_control_requests.csv";
+
+                                if Path::new(offline_requests_file).exists() {
+                                    if let Ok(content) = fs::read_to_string(offline_requests_file) {
+                                        let mut updated_requests = Vec::new();
+                                        let mut found_match = false;
+
+                                        for line in content.lines() {
+                                            if line.starts_with("client_id,image_id,views") {
+                                                updated_requests.push(line.to_string()); // Retain header
+                                                continue;
+                                            }
+
+                                            let parts: Vec<&str> = line.split(',').collect();
+                                            if parts.len() == 3 {
+                                                let client_id = parts[0].to_string();
+                                                let image_id = parts[1].to_string();
+                                                let views = parts[2].to_string();
+
+                                                if client_id == online_status.client_id && !found_match {
+                                                    println!(
+                                                        "Processing offline request for client_id={}, image_id={}, views={}",
+                                                        client_id, image_id, views
+                                                    );
+                                                
+                                                    // Get the IP address of the Offline wanted client from the directory of service
+                                                    let dos_path = "directory_of_service.csv";
+                                                    let mut client_ip = String::new();
+                                                    if Path::new(dos_path).exists() {
+                                                        if let Ok(dos_content) = fs::read_to_string(dos_path) {
+                                                            for dos_line in dos_content.lines() {
+                                                                // Skip the header
+                                                                if dos_line.starts_with("uid,client_id,status") {
+                                                                    continue;
+                                                                }
+                                                
+                                                                let dos_fields: Vec<&str> = dos_line.split(',').collect();
+                                                                if dos_fields.len() == 3 {
+                                                                    if dos_fields[1] == client_id {
+                                                                        client_ip = dos_fields[0].to_string();
+                                                                        break;
+                                                                    }
+                                                                }
+                                                            }
+                                                        }
+                                                    }
+                                                
+                                                    if client_ip.is_empty() {
+                                                        println!(
+                                                            "No IP found for client_id={} in directory of service. Skipping.",
+                                                            client_id
+                                                        );
+                                                    } else {
+                                                        // Clone client_ip to prevent move
+                                                        let client_ip_clone = client_ip.clone();
+                                                
+                                                        // Send CONTROL_UPDATE to the client
+                                                        let update_message = format!(
+                                                            "CONTROL_UPDATE:{}:{}:{}",
+                                                            client_id, image_id, views
+                                                        );
+
+                                                        // print the message to be sent to client
+                                                        println!("Sending CONTROL_UPDATE to client: {}", update_message);
+                                                
+                                                        socket_election
+                                                            .lock()
+                                                            .await
+                                                            .send_to(update_message.as_bytes(), client_ip_clone)
+                                                            .await
+                                                            .unwrap();
+                                                        println!("Sent CONTROL_UPDATE to {}", client_ip);
+                                                
+                                                        found_match = true; // Ensure only one match is processed
+                                                    }
+                                                } else {
+                                                    updated_requests.push(line.to_string()); // Retain non-matching entries
+                                                }
+                                            }
+                                        }
+
+                                        // Rewrite the file with remaining requests
+                                        let mut file = File::create(offline_requests_file)
+                                            .await
+                                            .expect("Failed to recreate offline requests file");
+                                        for request in updated_requests {
+                                            file.write_all(format!("{}\n", request).as_bytes())
+                                                .await
+                                                .expect("Failed to write to offline requests file");
+                                        }
+
+                                        println!("Offline requests file updated.");
+
+                                    }
                                 }
                             }
-
                         }
                         Err(e) => eprintln!("Failed to parse OnlineStatus: {}", e),
                     }
@@ -512,6 +682,7 @@ pub async fn middleware() -> io::Result<()> {
                     eprintln!("Malformed STATUS message: {}", message);
                 }
             }
+
             else if message.starts_with("Request_DOS") {
                 println!("Received DOS message from {}", addr);
             
@@ -651,6 +822,55 @@ pub async fn middleware() -> io::Result<()> {
                         println!("Client ID not found in directory of service.");
                     } else if !client_status {
                         println!("Client ID is offline.");
+
+                        // Define the path to the offline requests file
+                        let offline_requests_file = "offline_access_control_requests.csv";
+                    
+                        // Check if the file exists, and create it with a header if it doesn't
+                        if !Path::new(offline_requests_file).exists() {
+                            let mut file = File::create(offline_requests_file)
+                                .await
+                                .expect("Failed to create offline requests file");
+                            file.write_all(b"client_id,image_id,views\n")
+                                .await
+                                .expect("Failed to write header to offline requests file");
+                        }
+                    
+                        // Append the new request to the file
+                        let mut file = OpenOptions::new()
+                            .write(true)
+                            .append(true)
+                            .open(offline_requests_file)
+                            .expect("Failed to open offline requests file for appending");
+                    
+                        writeln!(
+                            file,
+                            "{},{},{}",
+                            stored_client_id, stored_image_id, stored_views
+                        )
+                        .expect("Failed to write offline request to file");
+                    
+                        println!(
+                            "Offline request stored: client_id={}, image_id={}, views={}",
+                            stored_client_id, stored_image_id, stored_views
+                        );
+                    
+                        // Send "OFFLINE_WANTED" message to other servers using the `peers` list
+                        let offline_message = format!(
+                            "OFFLINE_WANTED:{}:{}:{}",
+                            stored_client_id, stored_image_id, stored_views
+                        );
+                    
+                        for peer in &peers {
+                            socket_election
+                                .lock()
+                                .await
+                                .send_to(offline_message.as_bytes(), peer)
+                                .await
+                                .unwrap();
+                            println!("Sent OFFLINE_WANTED to server at {}", peer);
+                        }
+
                     } else {
                         println!("Client ID is online at IP: {}", client_ip);
             

@@ -9,7 +9,7 @@ use std::fs;
 use std::fs::read_to_string;
 use std::fs::File;
 use std::fs::OpenOptions;
-use std::io::{self, Cursor, Write};
+use std::io::{self, Cursor, Write, BufRead};
 use std::net::SocketAddr;
 use std::path::Path;
 use std::process::Command;
@@ -218,12 +218,30 @@ pub async fn main() -> io::Result<()> {
             //     // middleware(&socket2, &socket6, "5").await?;
             // }
             if input.trim().eq_ignore_ascii_case("r") {
-                // Request image by ID
-                println!("Enter image ID to request (e.g., 5_0): ");
+                let history_table = "history_table.txt";
                 let mut image_id = String::new();
-                io::stdin()
-                    .read_line(&mut image_id)
-                    .expect("Failed to read image ID");
+
+                if Path::new(history_table).exists() {
+                    let file = File::open(history_table).expect("Failed to open history_table.txt");
+                    if let Some(Ok(line)) = io::BufReader::new(file).lines().next() {
+                        image_id = line.trim().to_string();
+                    } else {
+                        println!("History file is empty. Please enter an image ID:");
+                        io::stdin()
+                            .read_line(&mut image_id)
+                            .expect("Failed to read image ID");
+                    }
+                } else {
+                    println!("Enter image ID to request (e.g., 5_0): ");
+                    io::stdin()
+                        .read_line(&mut image_id)
+                        .expect("Failed to read image ID");
+
+                    let mut file =
+                        File::create(history_table).expect("Failed to create history_table.txt");
+                    file.write_all(image_id.as_bytes())
+                        .expect("Failed to write to history_table.txt");
+                }
 
                 let client_map_locked = client_map.lock().unwrap();
                 request_image_by_id(
@@ -233,6 +251,10 @@ pub async fn main() -> io::Result<()> {
                     &info.client_id,
                 )
                 .await?;
+
+                if Path::new(history_table).exists() {
+                    fs::remove_file(history_table).expect("Failed to delete history_table.txt");
+                }
             } else if input.trim().eq_ignore_ascii_case("e")
                 || input.trim().eq_ignore_ascii_case("E")
             {
@@ -331,7 +353,7 @@ pub async fn main() -> io::Result<()> {
                 if !samples_received {
                     println!("No samples were transmitted during the DoS request.");
                 }
-            }else if input.trim().eq_ignore_ascii_case("v")
+            } else if input.trim().eq_ignore_ascii_case("v")
                 || input.trim().eq_ignore_ascii_case("V")
             {
                 // receive input for image id
@@ -420,40 +442,38 @@ pub async fn main() -> io::Result<()> {
                     // delete temporary decrypted image
                     // fs::remove_file(decrypted_path).expect("Failed to delete decrypted image");
                 }
-            } 
-
-            else if (input.trim().eq_ignore_ascii_case("c") || input.trim().eq_ignore_ascii_case("C")) {
+            } else if (input.trim().eq_ignore_ascii_case("c")
+                || input.trim().eq_ignore_ascii_case("C"))
+            {
                 println!("Enter the recipient ID:");
                 let mut recipient_id = String::new();
                 io::stdin()
                     .read_line(&mut recipient_id)
                     .expect("Failed to read recipient ID");
                 let recipient_id = recipient_id.trim();
-            
+
                 println!("Enter the image:");
                 let mut image_id_part = String::new();
                 io::stdin()
                     .read_line(&mut image_id_part)
                     .expect("Failed to read image ID part 1");
                 let image_id_part = image_id_part.trim();
-            
+
                 println!("Enter the new view count:");
                 let mut new_views = String::new();
                 io::stdin()
                     .read_line(&mut new_views)
                     .expect("Failed to read new view count");
                 let new_views = new_views.trim();
-            
+
                 // Combine all inputs into the required format
                 let access_input = format!("{}_{}_{}", recipient_id, image_id_part, new_views);
-                
+
                 // Send the formatted message to the server
                 let message = format!("Access_Control:{}", access_input);
                 socket.send_to(message.as_bytes(), assistant).await?;
                 println!("Sent access control request: {}", access_input);
-            }
-             
-            else {
+            } else {
                 println!("Invalid input. Please try again.");
             }
         }

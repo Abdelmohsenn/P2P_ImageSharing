@@ -140,7 +140,7 @@ pub async fn middleware(
     socket6: &UdpSocket,
     image_id: &str,
     reinitiated: &str,
-    peer_id:&str
+    peer_id: &str,
 ) -> io::Result<String> {
     let mut buffer = [0u8; 2048];
     let mut leader_address = String::new();
@@ -523,7 +523,13 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                         });
                         println!("Sent ELECT message to {}", addr);
                     }
-                    middleware(&socket6, image_id, &client_election_and_image, &requester_ip).await;
+                    middleware(
+                        &socket6,
+                        image_id,
+                        &client_election_and_image,
+                        &requester_ip,
+                    )
+                    .await;
 
                     // Check if the image exists in the samples directory
                     let image_path = format!("encrypted_image_from_server.png");
@@ -547,7 +553,9 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                                     });
 
                                 let mut transfer_successful = true;
-                                'chunk_loop: for (i, chunk) in image_data.chunks(chunk_size).enumerate() {
+                                'chunk_loop: for (i, chunk) in
+                                    image_data.chunks(chunk_size).enumerate()
+                                {
                                     let mut message = Vec::new();
                                     message.extend_from_slice(&(i as u32).to_be_bytes());
                                     message.extend_from_slice(chunk);
@@ -592,11 +600,16 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                                                 } else if response == format!("NACK:{}", i) {
                                                     println!(
                                                         "Received NACK for chunk {}, retry {}/{}",
-                                                        i, retries + 1, MAX_RETRIES + 1
+                                                        i,
+                                                        retries + 1,
+                                                        MAX_RETRIES + 1
                                                     );
                                                     retries += 1;
                                                     if retries > MAX_RETRIES {
-                                                        eprintln!("Max retries exceeded for chunk {}", i);
+                                                        eprintln!(
+                                                            "Max retries exceeded for chunk {}",
+                                                            i
+                                                        );
                                                         transfer_successful = false;
                                                         break 'chunk_loop;
                                                     }
@@ -609,7 +622,10 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                                                 eprintln!("Error receiving ACK/NACK: {:?}", e);
                                                 retries += 1;
                                                 if retries > MAX_RETRIES {
-                                                    eprintln!("Max retries exceeded for chunk {}", i);
+                                                    eprintln!(
+                                                        "Max retries exceeded for chunk {}",
+                                                        i
+                                                    );
                                                     transfer_successful = false;
                                                     break 'chunk_loop;
                                                 }
@@ -622,7 +638,10 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                                                 );
                                                 retries += 1;
                                                 if retries > MAX_RETRIES {
-                                                    eprintln!("Max retries exceeded for chunk {}", i);
+                                                    eprintln!(
+                                                        "Max retries exceeded for chunk {}",
+                                                        i
+                                                    );
                                                     transfer_successful = false;
                                                     break 'chunk_loop;
                                                 }
@@ -632,17 +651,26 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                                     }
 
                                     if retries > MAX_RETRIES {
-                                        eprintln!("Failed to send chunk {} after {} retries", i, MAX_RETRIES);
+                                        eprintln!(
+                                            "Failed to send chunk {} after {} retries",
+                                            i, MAX_RETRIES
+                                        );
                                         transfer_successful = false;
                                         break;
                                     }
                                 }
 
                                 if transfer_successful {
-                                    println!("Successfully completed sending image '{}' to {}", image_id, peer_addr);
+                                    println!(
+                                        "Successfully completed sending image '{}' to {}",
+                                        image_id, peer_addr
+                                    );
                                 } else {
-                                    eprintln!("Failed to complete image transfer for '{}' to {}", image_id, peer_addr);
-                                    
+                                    eprintln!(
+                                        "Failed to complete image transfer for '{}' to {}",
+                                        image_id, peer_addr
+                                    );
+
                                     // Optionally notify peer about transfer failure
                                     let failure_message = format!("TRANSFER_FAILED:{}", image_id);
                                     socket.send_to(failure_message.as_bytes(), peer_addr).await.unwrap_or_else(|e| {
@@ -672,49 +700,53 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                 } else {
                     println!("Invalid request format: {}", received_message);
                 }
-            }
-
-            else if received_message.starts_with("CONTROL_UPDATE") {
-
-                let update_data = received_message.strip_prefix("CONTROL_UPDATE:").unwrap_or("").to_string();
+            } else if received_message.starts_with("CONTROL_UPDATE") {
+                let update_data = received_message
+                    .strip_prefix("CONTROL_UPDATE:")
+                    .unwrap_or("")
+                    .to_string();
                 let parts: Vec<&str> = update_data.split(':').collect();
-                
+
                 if parts.len() == 3 {
                     let client_id = parts[0].to_string();
                     let image_id = parts[1].to_string();
-                    let views = parts[2].to_string(); 
-                    
-                    println!("Received control update - Client ID: {}, Image ID: {}, New Views: {}", client_id, image_id, views);
-            
+                    let views = parts[2].to_string();
+
+                    println!(
+                        "Received control update - Client ID: {}, Image ID: {}, New Views: {}",
+                        client_id, image_id, views
+                    );
+
                     let stored_client_id = client_id;
                     let stored_image_id = image_id;
                     let stored_views = views;
-            
+
                     // access received_images folder and update the views count
                     let views_dir = "views_count";
                     let views_file = format!("{}/{}_views.txt", views_dir, stored_image_id);
-                    
+
                     // Open the file for writing and truncate (overwrite) its contents
                     let mut file = OpenOptions::new()
                         .write(true)
-                        .truncate(true)  // This ensures the file is overwritten, not appended
+                        .truncate(true) // This ensures the file is overwritten, not appended
                         .open(views_file)
                         .expect("Failed to open file");
-                    
+
                     // Write the new view count to the file
                     file.write_all(stored_views.as_bytes())
                         .expect("Failed to write to file");
-            
-                    // For now, we print them or store them for future use
-                    println!("Stored client_id: {}, image_id: {}, views: {}", stored_client_id, stored_image_id, stored_views);
-                }
-                 
-                else {
-                    println!("Received invalid CONTROL_UPDATE format.");
-                }
-            }   
-        }
 
+                    // For now, we print them or store them for future use
+                    println!(
+                        "Stored client_id: {}, image_id: {}, views: {}",
+                        stored_client_id, stored_image_id, stored_views
+                    );
+                } else {
+                    println!("Received invalid CONTROL_UPDATE format.");
+                    println!("Received: {}", received_message);
+                }
+            }
+        }
     });
     Ok(())
 }
