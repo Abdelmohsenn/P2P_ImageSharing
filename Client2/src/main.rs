@@ -143,7 +143,7 @@ pub async fn main() -> io::Result<()> {
             let info = OnlineStatus {
                 ip: p2p_listener.to_string(),
                 status: true,
-                client_id: "6".to_string(),
+                client_id: "2".to_string(),
             };
 
             let serialized_info = serde_json::to_string(&info).unwrap();
@@ -263,7 +263,7 @@ pub async fn main() -> io::Result<()> {
                 let info = OnlineStatus {
                     ip: p2p_listener.to_string(),
                     status: false,
-                    client_id: "6".to_string(),
+                    client_id: "2".to_string(),
                 };
                 let serialized_info = serde_json::to_string(&info).unwrap();
                 let message_to_send = format!("STATUS:{}", serialized_info);

@@ -813,6 +813,14 @@ pub async fn middleware() -> io::Result<()> {
                                     }
                                 }
                             }
+                            if online_status.status {
+                                // Convert peers to Vec<String> for the function call
+                                let peers_for_samples: Vec<String> = peers.iter().map(|&peer| peer.to_string()).collect();
+                            
+                                if let Err(e) = receive_samples(&socket_election, &online_status.client_id, &addr, &peers_for_samples).await {
+                                    eprintln!("Failed to receive samples: {:?}", e);
+                                }
+                            }
                         }
                         Err(e) => eprintln!("Failed to parse OnlineStatus: {}", e),
                     }

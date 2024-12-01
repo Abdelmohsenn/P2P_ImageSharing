@@ -511,7 +511,7 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                     let image_id = full_image_id.split('_').nth(1).unwrap_or(full_image_id);
 
                     println!(
-                        "Received request for image '{}' from requester IP: {}",
+                        "Received request for image '{}' from requester ID: {}",
                         image_id, requester_ip
                     );
 
