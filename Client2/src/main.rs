@@ -429,16 +429,30 @@ pub async fn main() -> io::Result<()> {
         }
 
         else if (input.trim().eq_ignore_ascii_case("c") || input.trim().eq_ignore_ascii_case("C")) {
-            // Request for control access
-            println!("Enter the client ID, image ID (in two parts), and new view count (format: client_id_image_id_part1_image_id_part2_new_views), e.g., 5_6_23_2:");
-            let mut access_input = String::new();
+            println!("Enter the recipient ID:");
+            let mut recipient_id = String::new();
             io::stdin()
-                .read_line(&mut access_input)
-                .expect("Failed to read access input");
+                .read_line(&mut recipient_id)
+                .expect("Failed to read recipient ID");
+            let recipient_id = recipient_id.trim();
         
-            // Clean up the input (remove any leading/trailing whitespace)
-            let access_input = access_input.trim();
+            println!("Enter the image:");
+            let mut image_id_part = String::new();
+            io::stdin()
+                .read_line(&mut image_id_part)
+                .expect("Failed to read image ID part 1");
+            let image_id_part = image_id_part.trim();
         
+            println!("Enter the new view count:");
+            let mut new_views = String::new();
+            io::stdin()
+                .read_line(&mut new_views)
+                .expect("Failed to read new view count");
+            let new_views = new_views.trim();
+        
+            // Combine all inputs into the required format
+            let access_input = format!("{}_{}_{}", recipient_id, image_id_part, new_views);
+            
             // Send the formatted message to the server
             let message = format!("Access_Control:{}", access_input);
             socket.send_to(message.as_bytes(), assistant).await?;

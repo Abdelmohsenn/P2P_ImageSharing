@@ -139,6 +139,7 @@ pub async fn middleware(
     socket6: &UdpSocket,
     image_id: &str,
     reinitiated: &str,
+    peer_id: &str
 ) -> io::Result<String> {
     let mut buffer = [0u8; 2048];
     let mut leader_address = String::new();
@@ -221,9 +222,10 @@ pub async fn middleware(
     println!("Encrypted image saved as PNG at {}", encrypted_image_path);
 
     let views = 5;
-    let client_id = 5;
+    // convert peer_id to int
+    let peer_id = u32::from_str_radix(peer_id, 10).unwrap();
 
-    embed_data_in_image(encrypted_image_path, views, client_id, encrypted_image_path)?;
+    embed_data_in_image(encrypted_image_path, views, peer_id, encrypted_image_path)?;
     let encrypted_image = file_as_dynamic_image(encrypted_image_path.to_string()).to_rgba();
     let decoder = Decoder::new(encrypted_image);
     let decrypted_data = decoder.decode_alpha();
@@ -516,7 +518,7 @@ pub async fn start_p2p_listener(client_address: &str, client: &str) -> io::Resul
                         });
                         println!("Sent ELECT message to {}", addr);
                     }
-                    middleware(&socket6, image_id, &client_election_and_image).await;
+                    middleware(&socket6, image_id, &client_election_and_image, &requester_ip).await;
 
                     // Check if the image exists in the samples directory
                     let image_path = format!("encrypted_image_from_server.png"); // images/5
@@ -758,7 +760,6 @@ pub async fn request_image_by_id(
                 "Extracted Views: {}, Extracted Client ID: {}",
                 extracted_views, extracted_client_id
             );
-            println!("Client ID: {}", client_id);
             ////////////////////////////////////////////////////////////////////////////////////////////////////
 
             // view file
