@@ -1,7 +1,5 @@
 # Peer to Peer Image Sharing System
 
-Based on the technical report, here are the key technical and performance highlights for your P2P image sharing system:
-
 ## System Overview
 A **Cloud Peer-to-Peer (P2P) system** for controlled image sharing with dual-layer encryption:
 - **Cloud servers** handle image encryption using steganography
